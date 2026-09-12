@@ -9490,12 +9490,15 @@ class MainWindow(QMainWindow):
                 break
         vg_url = QLineEdit(config.AGNES_VIDEO.get("base_url") or config.agnes_video_base_url(cur_region))
 
-        # 分站点 Key：切换站点时先把当前站点输入框内容存回内存，再载入目标站点已填写的 Key
-        def _sync_current_region_keys():
-            rid = vg_region.currentData() or "overseas"
+        # 分站点 Key：切换站点时先把当前站点输入框内容存回内存，再载入目标站点已填写的 Key。
+        # 注意 currentIndexChanged 触发时 currentData() 已是"目标"站点，须用闭包记录"输入框正在编辑的站点"
+        # 来回存旧站，否则会把旧站内容误存到新站，导致框内 keys 看似"没变化"。
+        editing_region = [cur_region]
+
+        def _read_vg_keys():
             k = [l.strip() for l in vg_keys.toPlainText().split("\n") if l.strip()]
             t = [l.strip() for l in vg_tp_keys.toPlainText().split("\n") if l.strip()]
-            config.agnes_video_store_region_keys(rid, k, t)
+            return k, t
 
         def _apply_region_keys(rid):
             rk = config.agnes_video_region_keys(rid)
@@ -9503,9 +9506,13 @@ class MainWindow(QMainWindow):
             vg_tp_keys.setPlainText("\n".join(rk["tokenplan_keys"]))
 
         def _vg_region_sync(*_a):
-            _sync_current_region_keys()
-            vg_url.setText(config.agnes_video_base_url(vg_region.currentData()))
-            _apply_region_keys(vg_region.currentData())
+            old = editing_region[0]
+            k, t = _read_vg_keys()
+            config.agnes_video_store_region_keys(old, k, t)   # 把"旧站"输入框内容回存旧站
+            new = vg_region.currentData() or "overseas"
+            editing_region[0] = new
+            vg_url.setText(config.agnes_video_base_url(new))
+            _apply_region_keys(new)
 
         vg_region.currentIndexChanged.connect(_vg_region_sync)
         vg_form.addRow("服务区域：", vg_region)
