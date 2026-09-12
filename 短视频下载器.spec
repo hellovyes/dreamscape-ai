@@ -29,7 +29,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='红果短视频下载器new',
+    name='短视频下载器new',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

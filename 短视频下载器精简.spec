@@ -1,9 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
+# 精简打包 spec：针对性 hiddenimports（而非全量 collect_all），并剔除无关 Qt 模块
 
-import sys
-import os
-
-# PyInstaller 打包时需要的隐藏导入
 hidden_imports = [
     'PySide6.QtMultimedia',
     'PySide6.QtMultimediaWidgets',
@@ -36,12 +33,18 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('config.py', '.'), ('gen_area.py', '.'), ('agnes_video.py', '.')],
     hiddenimports=hidden_imports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['tkinter', 'matplotlib', 'setuptools'],
+    excludes=[
+        'tkinter', 'matplotlib', 'setuptools',
+        'PySide6.Qt3DCore', 'PySide6.Qt3DRender', 'PySide6.Qt3DInput',
+        'PySide6.QtBluetooth', 'PySide6.QtQml', 'PySide6.QtQuick',
+        'PySide6.QtUiTools', 'PySide6.QtQuickWidgets',
+        'PySide6.QtVirtualKeyboard', 'PySide6.QtQuickControls2', 'PySide6.QtStateMachine',
+    ],
     noarchive=False,
     optimize=0,
 )
@@ -53,7 +56,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='红果视频下载器',
+    name='短视频下载器精简',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
