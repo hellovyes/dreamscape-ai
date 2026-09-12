@@ -1,4 +1,4 @@
-# 红果短视频下载器
+# dreamscape-ai
 
 基于 PySide6 的中文短视频下载与管理工具，附带视频 AI 生成能力（Agnes Video）。
 
@@ -25,5 +25,5 @@ python main.py
 ## 打包为 exe（PyInstaller 单文件）
 
 ```bash
-python -m PyInstaller --clean --noconfirm --workpath build --distpath dist 短视频下载器精简.spec
+python -m PyInstaller --clean --noconfirm --workpath build --distpath dist dreamscape-ai.spec
 ```
