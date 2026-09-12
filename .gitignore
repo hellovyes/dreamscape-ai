@@ -1,0 +1,32 @@
+# 构建产物
+build/
+build_*/
+build_temp/
+dist/
+dist_*/
+__pycache__/
+*.pyc
+
+# 可执行/二进制（运行期由打包生成或随发行提供）
+*.exe
+
+# 敏感配置（含 API 密钥与账号信息）
+api_config.json
+*_history.json
+projects.json
+
+# 日志
+*.log
+*_log.txt
+download_log.txt
+
+# 用户数据 / 运行时依赖 / 外部参考项目
+资产仓库/
+项目合集/
+_shot/
+ocr_engine_runtime/
+prompt-lens-main/
+.venv/
+
+# 历史版本构建脚本（仅保留当前规范文件）
+红果短视频下载器精简v*.spec
