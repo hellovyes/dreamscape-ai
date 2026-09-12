@@ -3,7 +3,7 @@
 import os
 from PySide6.QtCore import Qt, QTimer, QSize, QRectF
 from PySide6.QtGui import QIcon, QPainter, QColor, QPixmap, QImage
-from PySide6.QtMultimedia import QMediaPlayer, QVideoSink
+from PySide6.QtMultimedia import QMediaPlayer, QVideoSink, QAudioOutput
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QWidget, QLabel, QPushButton,
     QSlider, QGraphicsView, QGraphicsScene, QGraphicsItem,
@@ -416,9 +416,24 @@ class VideoPlayerCard(QWidget):
         return self._closed
 
     def closeEvent(self, event):
-        self.player.stop()
+        self._release_media()
         self._closed = True
         event.accept()
+
+    def _release_media(self):
+        """关闭时释放媒体资源：停播 + 清空源 + 回收 QVideoSink/QAudioOutput/QMediaPlayer，
+        避免解码线程与 GPU 表面泄漏。"""
+        from PySide6.QtCore import QUrl
+        try:
+            self.player.stop()
+            self.player.setSource(QUrl())
+        except Exception:
+            pass
+        for obj in (self._vsink, self.audio, self.player):
+            try:
+                obj.deleteLater()
+            except Exception:
+                pass
 
 
 # ─────────────────────────────────────────────
@@ -628,9 +643,24 @@ class FloatPlayerWindow(QWidget):
         return self._closed
 
     def closeEvent(self, event):
-        self.player.stop()
+        self._release_media()
         self._closed = True
         event.accept()
+
+    def _release_media(self):
+        """关闭时释放媒体资源：停播 + 清空源 + 回收 QVideoWidget/QAudioOutput/QMediaPlayer。"""
+        from PySide6.QtCore import QUrl
+        try:
+            self._vol_t.stop()
+            self.player.stop()
+            self.player.setSource(QUrl())
+        except Exception:
+            pass
+        for obj in (self.video_widget, self.audio, self.player):
+            try:
+                obj.deleteLater()
+            except Exception:
+                pass
 
     # ---- 拖拽移动 ----
     def mousePressEvent(self, event):

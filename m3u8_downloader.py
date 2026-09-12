@@ -3,6 +3,7 @@
 """
 import os
 import re
+import time
 import threading
 import logging
 from urllib.parse import urljoin
@@ -33,7 +34,6 @@ class M3U8Downloader:
         """探测多个 m3u8 URL，返回 (url, segments_count, total_duration_sec) 列表，按分片数降序排列。
         用于嗅探增强：从页面找到的多个候选 m3u8 中选出最长的那条（完整版而非预览版）。
         """
-        import time
         results = []
         for url in m3u8_urls:
             try:

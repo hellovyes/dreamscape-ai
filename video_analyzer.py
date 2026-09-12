@@ -298,24 +298,29 @@ class FrameGrabber(QObject):
         if self._fin:
             return
         self._fin = True
-        try:
-            self._player.stop()
-        except Exception:
-            pass
+        self._release_media()
         self.failed.emit(msg)
 
     def _finish(self):
         if self._fin:
             return
         self._fin = True
-        try:
-            self._player.stop()
-        except Exception:
-            pass
+        self._release_media()
         if self._frames:
             self.finished.emit(self._frames)
         else:
             self.failed.emit("未能从视频中抽取到任何帧")
+
+    def _release_media(self):
+        """抽帧结束/失败后释放媒体资源：停播 + 清空源。
+        QVideoSink/QAudioOutput/QMediaPlayer 均以 self 为 parent，随 QObject 销毁自动回收，
+        此处只需停播并清源，避免解码线程继续占用 GPU 表面。"""
+        from PySide6.QtCore import QUrl
+        try:
+            self._player.stop()
+            self._player.setSource(QUrl())
+        except Exception:
+            pass
 
 
 # ---------------- 场景切分（GUI 主线程，Qt 静音播放 + 帧差分检测镜头切换） ----------------
@@ -504,20 +509,14 @@ class SceneSegmenter(QObject):
         if self._fin:
             return
         self._fin = True
-        try:
-            self._player.stop()
-        except Exception:
-            pass
+        self._release_media()
         self.failed.emit(msg)
 
     def _finish(self):
         if self._fin:
             return
         self._fin = True
-        try:
-            self._player.stop()
-        except Exception:
-            pass
+        self._release_media()
         dur = self._duration if self._duration > 0 else self._cur_time
         rest = dur - self._seg_start
         if rest >= self.MIN_SEG * 0.6 and self._seg_start < dur:
@@ -533,6 +532,17 @@ class SceneSegmenter(QObject):
                 self.failed.emit("未能从视频中切分出片段")
                 return
         self.finished.emit({"duration": dur, "segments": self._segments, "seg_frames": self._seg_frames})
+
+    def _release_media(self):
+        """场景切分结束/失败后释放媒体资源：停播 + 清空源。
+        QVideoSink/QAudioOutput/QMediaPlayer 均以 self 为 parent，随 QObject 销毁自动回收，
+        此处只需停播并清源，避免解码线程继续占用 GPU 表面。"""
+        from PySide6.QtCore import QUrl
+        try:
+            self._player.stop()
+            self._player.setSource(QUrl())
+        except Exception:
+            pass
 
 
 # ---------------- 工作线程 ----------------

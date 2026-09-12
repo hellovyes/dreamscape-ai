@@ -76,8 +76,10 @@ def _transcode_to_h264(src, progress_cb=None):
         r = subprocess.run(cmd, capture_output=True, timeout=1800,
                            creationflags=_NO_WINDOW)
     except Exception as e:
+        shutil.rmtree(tmp, ignore_errors=True)
         raise RuntimeError("视频转码失败：%s" % e)
     if r.returncode != 0 or not os.path.exists(dst):
+        shutil.rmtree(tmp, ignore_errors=True)
         raise RuntimeError("视频转码失败：%s" % (r.stderr or b"").decode("utf-8", "ignore"))
     return dst
 
@@ -314,6 +316,7 @@ def _download_direct(url, dest, progress_cb=None):
 
 
 def download_to_temp(url, is_m3u8, progress_cb=None):
+    """下载到临时目录，返回 (视频路径, 临时目录)；调用方负责用完 rmtree 临时目录。"""
     tmp = tempfile.mkdtemp(prefix="hguo_ocr_")
     dest = os.path.join(tmp, "video.mp4")
     if is_m3u8 and M3U8Downloader is not None:
@@ -324,9 +327,9 @@ def download_to_temp(url, is_m3u8, progress_cb=None):
                         progress_callback=(lambda m, c, t, f: progress_cb(m)) if progress_cb else None)
         finally:
             dl.close()
-        return dest
+        return dest, tmp
     _download_direct(url, dest, progress_cb)
-    return dest
+    return dest, tmp
 
 
 class OcrWorker(QThread):
@@ -350,13 +353,15 @@ class OcrWorker(QThread):
         self._stop = True
 
     def run(self):
+        local = None
+        ocr_tmp_dir = None
         try:
             local = self.url
             is_local = self.url.startswith("file://") or os.path.exists(self.url)
             if not is_local:
                 self.progress.emit("下载临时文件…")
-                local = download_to_temp(self.url, self.is_m3u8,
-                                         lambda s: self.progress.emit(s))
+                local, ocr_tmp_dir = download_to_temp(self.url, self.is_m3u8,
+                                                       lambda s: self.progress.emit(s))
             self.progress.emit("初始化 OCR 引擎…")
             crop_cleanup = None
             eng = get_engine()
@@ -378,6 +383,10 @@ class OcrWorker(QThread):
             self.done.emit(subs if subs else [])
         except Exception as e:
             self.failed.emit(str(e))
+        finally:
+            # 清理 OCR 临时下载目录（仅当确实下载了远程文件到 %TEMP%），避免堆积
+            if ocr_tmp_dir:
+                shutil.rmtree(ocr_tmp_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

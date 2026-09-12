@@ -4,10 +4,12 @@
 import json
 import os
 import re
+import tempfile
 import time
 
-from PySide6.QtCore import Qt, Signal, QSize, QUrl, QThread, QEvent, QPoint, QTimer
+from PySide6.QtCore import Qt, Signal, QSize, QUrl, QThread, QEvent, QPoint, QTimer, QRect
 from PySide6.QtGui import (QPixmap, QTextCharFormat, QFont, QColor, QTextCursor,
+                           QImage, QPainter, QBrush, QPen,
                            QGuiApplication, QIcon)
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
                                QLabel, QComboBox, QLineEdit, QPlainTextEdit,
@@ -18,6 +20,32 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
 
 import config
 from agnes_video import CreateTaskWorker, PollWorker, download_video, save_video_local, ASPECT_RATIOS
+
+
+# 参考图原始保留上限：允许填充/手动添加超过 5 张，发送时按「≤5 张」自动合并为 单图 + 拼接图。
+# 5 组 × 最高 3 合一 = 15 张，保证组数不超过 5 且能尽量保留全部原图。
+_MAX_REF = 15
+
+
+def _new_merge_dir():
+    """生成一次发送用的独立临时目录（每次生成/发送都新建，避免长期堆积在 %TEMP%）。
+    用完由调用方 rmtree。"""
+    import shutil
+    try:
+        return tempfile.mkdtemp(prefix="dreamscape_ref_merge_")
+    except Exception:
+        return None
+
+
+def _rmtree_merge_dir(d):
+    """清理一次发送的临时目录（拼接/标注图）。失败静默。"""
+    if not d:
+        return
+    try:
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
+    except Exception:
+        pass
 
 
 def create_image_task(api_key, base_url, prompt, model=None, size="1024x1024",
@@ -150,6 +178,31 @@ class _SaveVideoThread(QThread):
             self.done.emit(path)
         except Exception as e:
             self.fail.emit(str(e))
+
+
+class _RefPrepWorker(QThread):
+    """后台线程：把参考图整理为带标注/拼接的发送图，避免点生成时 UI 卡顿。
+    在子线程里做 QImage 读图 + 缩放 + QPainter + 写 PNG。完成后回到 UI 线程发任务。"""
+    done = Signal(list, str)     # (merged_paths, tmp_dir)
+    fail = Signal(str)
+
+    def __init__(self, widget, paths, parent=None):
+        super().__init__(parent)
+        self._w = widget
+        self._paths = paths or []
+
+    def run(self):
+        try:
+            # 关键：_refs_for_send 只做离屏 QImage/QPainter 操作，不触碰 QWidget，可在子线程安全运行
+            merged, tmp_dir = self._w._refs_for_send(self._paths)
+            self.done.emit(merged, tmp_dir or "")
+        except Exception as e:
+            # 整理失败也要把临时目录带回主线程清理，避免残留
+            try:
+                self._w._cleanup_ref_tmp_dir_safe(getattr(self._w, "_ref_tmp_dir", None))
+            except Exception:
+                pass
+            self.fail.emit(str(e) or "参考图整理失败")
 
 
 def _read_api_key():
@@ -901,7 +954,7 @@ class GenAreaWidget(QWidget):
         self.reflist.setFixedHeight(96)
         self.reflist.setSpacing(3)
         self.reflist.setStyleSheet("QListWidget{background:#f8fafc; border:1px solid #cbd5e1; border-radius:8px;} QListWidget::item{border:none; padding:2px;} QListWidget::item:selected{background:#e2e8f0;}")
-        self.reflist.setToolTip("点击缩略图放大预览 · 悬停右上角 ✕ 删除 · 可拖动排序 · 末尾 + 添加图片（最多5张）")
+        self.reflist.setToolTip("点击缩略图放大预览 · 悬停右上角 ✕ 删除 · 可拖动排序 · 末尾 + 添加图片（可超5张，发送时自动合并为≤5）")
         self.reflist.model().rowsMoved.connect(self._sync_ref_order)
         refrow.addWidget(self.reflist, 1)
         lf.addLayout(refrow)
@@ -946,7 +999,7 @@ class GenAreaWidget(QWidget):
         for fp in files:
             if fp in new_list:
                 continue
-            if len(new_list) >= 5:
+            if len(new_list) >= _MAX_REF:
                 break
             new_list.append(fp)
         self._ref_imgs = new_list
@@ -1001,7 +1054,7 @@ class GenAreaWidget(QWidget):
             if isinstance(img, str) and os.path.isfile(img):
                 self._asset_refs[tok] = img
                 if img not in self._ref_imgs:
-                    if len(self._ref_imgs) >= 5:
+                    if len(self._ref_imgs) >= _MAX_REF:
                         break
                     self._ref_imgs.append(img)
                     filled.append(tok)
@@ -1337,16 +1390,18 @@ class GenAreaWidget(QWidget):
         btn.setText("+")
         btn.setFixedSize(52, 46)
         btn.setCursor(Qt.PointingHandCursor)
-        btn.setToolTip("添加参考图片（最多5张）")
+        btn.setToolTip("添加参考图片（可超5张，发送时自动合并为≤5）")
         btn.setStyleSheet(
             "QToolButton{font-size:22px; color:#3b82f6; background:#f8fafc; border:1.5px dashed #93c5fd;"
             " border-radius:8px; font-weight:700;}"
             "QToolButton:hover{background:#dbeafe; border-color:#3b82f6;}")
         btn.clicked.connect(self._show_add_menu)
         v.addWidget(btn, 0, Qt.AlignCenter)
-        cnt = QLabel("%d/5" % len(self._ref_imgs))
+        n = len(self._ref_imgs)
+        cnt = QLabel("%d/5" % n if n <= 5 else "≥5:合并%d→5" % n)
         cnt.setStyleSheet("color:#94a3b8; font-size:9px; background:transparent;")
         cnt.setAlignment(Qt.AlignCenter)
+        cnt.setToolTip("已选 %d 张参考图；发送时若超过 5 张，自动把超出部分拼接合并并在图上标注资产名，传给模型仍 ≤5 张" % n)
         v.addWidget(cnt, 0, Qt.AlignCenter)
         return w
 
@@ -1567,7 +1622,7 @@ class GenAreaWidget(QWidget):
             pass
         self._ref_imgs = []
         for p in st.get("refs", []):
-            if p and len(self._ref_imgs) < 5:
+            if p and len(self._ref_imgs) < _MAX_REF:
                 self._ref_imgs.append(p)
         self._asset_refs = {}
         self._update_ref_ui()
@@ -1618,14 +1673,22 @@ class GenAreaWidget(QWidget):
         if not recs or not self._task:
             return
         vid = self._task.get("video_id")
+        changed = False
         for r in recs:
             if r.get("video_id") == vid:
-                r["status"] = status
+                if r.get("status") != status:
+                    r["status"] = status
+                    changed = True
                 if err:
                     r["error"] = err
+                    changed = True
                 if url:
                     r["video_url"] = url
+                    changed = True
                 break
+        # 只有关键字段真的变化才写盘，避免每 2 秒 tick 反复磁盘 IO
+        if not changed:
+            return
         self._save_history(recs)
         self._refresh_history()
 
@@ -1678,6 +1741,169 @@ class GenAreaWidget(QWidget):
 
     # ---------------- 生成流程 ----------------
 
+    def _plan_merge(self, paths):
+        """把 >5 张参考图分成不超过 5 组（每组 1~3 张且至少 2 才拼），覆盖全部原图、
+        单图尽量多。分组列表每个元素是该组包含的原图路径（长度 1 / 2 / 3）。
+        算法：5 组每组分得若干张；为最大化单图数，把多出的 R 张增量尽量集中到最少组（每组最多加 2 张）。
+        例：6 张→[单,单,单,单,二合一]；7 张→[单,单,单,单,三合一]；8 张→[单,单,单,三合一,二合一]。"""
+        n = len(paths)
+        if n <= 5:
+            return [[p] for p in paths]
+        # 最多 5 组，覆盖 n（n≤15）。先全部设想为单图共 5 组，R 张增量需并入某些组（每组最多再 +2）
+        R = n - 5
+        m = -(-R // 2)          # 需要的"多图组"数 = ceil(R/2)；其余组保持单图
+        s = 5 - m               # 单图数量
+        # 把 R 张增量尽量集中给前面的多图组（每组 0~2）
+        d = [0] * m
+        rem = R
+        for i in range(m):
+            space = 2 * (m - 1 - i)
+            d[i] = min(2, max(0, rem - space))
+            rem -= d[i]
+        sizes = [1] * s + [1 + d[i] for i in range(m)]
+        groups = []
+        idx = 0
+        for sz in sizes:
+            groups.append(paths[idx:idx + sz])
+            idx += sz
+        return groups
+
+    def _merge_composite(self, group, out_path):
+        """把一组（2~3 张）参考图水平拼接成一张新图，并在每张子图下方用资产名标注，
+        让模型能按名称把他们对应到剧本里出现的人物/场景/道具。
+        读取失败的子图会被跳过，且其资产名一并跳过（按下标配对，避免错位）。"""
+        pairs = []  # [(path, im), ...] 成功读取的（按原顺序）
+        for p in group:
+            im = QImage(p)
+            if im.isNull():
+                continue
+            pairs.append((p, im.scaledToHeight(384, Qt.SmoothTransformation)))
+        if not pairs:
+            return None
+        imgs = [im for _, im in pairs]
+        # 标注参数按子图宽度比例自适应，保证模型清晰可读：
+        #   字号 ≈ 子图宽 5.5%（最小 22px），标注条高 ≈ 子图宽 10%（最小 44px），黑字 #111。
+        sub_w = min(im.width() for im in imgs)
+        font_px = max(22, int(sub_w * 0.055))
+        text_h = max(44, int(sub_w * 0.10))
+        total_w = sum(im.width() for im in imgs)
+        canvas = QImage(max(total_w, 1), imgs[0].height() + text_h, QImage.Format_ARGB32)
+        canvas.fill(Qt.white)
+        painter = QPainter(canvas)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        x = 0
+        font = QFont()
+        font.setPixelSize(font_px)
+        painter.setFont(font)
+        for path, im in pairs:
+            painter.drawImage(x, 0, im)
+            painter.setPen(QPen(QColor("#64748b"), 1.5))
+            painter.drawRect(x, 0, im.width(), im.height())
+            name = self._ref_image_name(path)
+            # 不省略，直接全量居中；字号已足够大，正常宽度都能放得下
+            painter.setPen(QColor("#111111"))
+            painter.drawText(QRect(x + 2, im.height(), im.width() - 4, text_h),
+                             Qt.AlignCenter, name)
+            x += im.width()
+        painter.end()
+        try:
+            os.makedirs(os.path.dirname(out_path), exist_ok=True)
+            if canvas.save(out_path, "PNG"):
+                return out_path
+        except Exception:
+            pass
+        return None
+
+    def _single_label(self, path, out_path):
+        """给单张参考图在底部加一条资产名标注条（与原拼接图样式一致：白底 + 红字 + 灰蓝边），
+        让模型也能按图上的名称把该参考图对应到剧本里的人物/场景/道具。
+        成功返回带标注的 png 路径；读图失败返回 None。"""
+        im = QImage(path)
+        if im.isNull():
+            return None
+        # 与拼接图一致：字号 ≈ 图宽 5.5%（最小 22px），条高 ≈ 图宽 10%（最小 44px），黑字 #111。
+        font_px = max(22, int(im.width() * 0.055))
+        text_h = max(44, int(im.width() * 0.10))
+        canvas = QImage(im.width(), im.height() + text_h, QImage.Format_ARGB32)
+        canvas.fill(Qt.white)
+        painter = QPainter(canvas)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.drawImage(0, 0, im)
+        painter.setPen(QPen(QColor("#64748b"), 1.5))
+        painter.drawRect(0, 0, im.width(), im.height())
+        font = QFont()
+        font.setPixelSize(font_px)
+        painter.setFont(font)
+        name = self._ref_image_name(path)
+        painter.setPen(QColor("#111111"))
+        painter.drawText(QRect(2, im.height(), im.width() - 4, text_h),
+                         Qt.AlignCenter, name)
+        painter.end()
+        try:
+            os.makedirs(os.path.dirname(out_path), exist_ok=True)
+            if canvas.save(out_path, "PNG"):
+                return out_path
+        except Exception:
+            pass
+        return None
+
+    def _refs_for_send(self, paths):
+        """发送前把参考图整理为 ≤5 张，且每一张（无论单图还是拼接图）都带上资产名标注，方便模型识别。
+        ≤5 张：逐张加标注条后发送（拼接逻辑不变，单图也加标注）；
+        >5 张：把超出部分按最优算法拼接合并（拼接图本身已含标注），单图组同样加标注。
+        拼接/标注图写入一次性的临时目录（_new_merge_dir），用完由调用方 _rmtree_merge_dir 清理，
+        避免 %TEMP% 长期堆积。返回 (merged_paths, tmp_dir)。
+        说明：本方法只做离屏 QImage/QPainter 操作（不触碰任何 QWidget），因此既可在 UI 线程
+        调用，也可在 _RefPrepWorker 子线程里调用（P1 用它实现后台整理）。"""
+        paths = [p for p in paths if p and os.path.exists(p)]
+        groups = self._plan_merge(paths)
+        tmp_dir = _new_merge_dir()
+        merged = []
+        gi = 0
+        for g in groups:
+            gi += 1
+            tag = int(time.time() * 1000) % 1000000
+            # 无法创建临时目录时退回原图，仍保证能发送
+            base_dir = tmp_dir if tmp_dir else None
+            if len(g) == 1:
+                if base_dir:
+                    out = os.path.join(base_dir, "ref_lbl_%d_%d_%d.png" % (
+                        os.getpid(), gi, tag))
+                    res = self._single_label(g[0], out)
+                    merged.append(res or g[0])   # 加标注失败则退回原图
+                else:
+                    merged.append(g[0])
+            else:
+                if base_dir:
+                    out = os.path.join(base_dir, "ref_merge_%d_%d_%d.png" % (
+                        os.getpid(), gi, tag))
+                    res = self._merge_composite(g, out)
+                    if res:
+                        merged.append(res)
+                    else:
+                        # 拼接失败：逐张加标注后全部保留（理论上不会触发 >5，因 5 组封顶）
+                        for j, pp in enumerate(g):
+                            o2 = os.path.join(base_dir, "ref_lbl_%d_%d_%de.png" % (
+                                os.getpid(), gi, tag, j))
+                            merged.append(self._single_label(pp, o2) or pp)
+                else:
+                    for pp in g:
+                        merged.append(pp)
+        # 若个别组退回导致仍可能 >5（理论只在合成失败时），再补一层截断保护
+        return merged[:5], tmp_dir
+
+    def _cleanup_ref_tmp_dir_safe(self, d):
+        """跨线程安全清理临时目录（仅供 _RefPrepWorker 异常分支使用）。"""
+        if d:
+            _rmtree_merge_dir(d)
+
+    def _cleanup_ref_tmp(self):
+        """CreateTaskWorker 已把参考图（拼接/标注 png）读取完毕，清理本次一次性临时目录。"""
+        d = getattr(self, "_ref_tmp_dir", None)
+        if d:
+            _rmtree_merge_dir(d)
+        self._ref_tmp_dir = None
+
     def _start(self):
         if self._creating or (self._poll and self._poll.isRunning()):
             return
@@ -1712,21 +1938,57 @@ class GenAreaWidget(QWidget):
         self._creating = True
         self.go.setEnabled(False)
         self.stop_btn.setEnabled(True)
-        self.status.setText("正在创建任务…")
+        self.status.setText("正在整理参考图…")
         self.meta.setText("")
         ref = [p for p in self._ref_imgs if os.path.exists(p)]
         # 极简直发模式（参考 agnes-ai-studio）：裸 prompt + images 数组，不注入模板前缀。
         # 模型根据图片顺序与 prompt 内容自行匹配，更简单不易错。
         sent_prompt = (prompt or "").strip()
         self._last_sent_prompt = sent_prompt
+        # 保留本次发送参数到后台线程里，准备完成后回主线程再创建任务
+        self._pending_ref_paths = ref          # 原始参考图（未标注）
+        self._pending_sent_prompt = sent_prompt
+        self._pending_aspect = _aspect
+        if ref:
+            self.status.setText("正在整理参考图…")
+            # P1：把耗时较长的「读图 + 缩放 + QPainter 标注/拼接 + 写 PNG」放到后台线程，
+            # 避免点生成瞬间卡住 UI
+            self._ref_prep = _RefPrepWorker(self, ref, parent=self)
+            self._ref_prep.done.connect(self._on_ref_prepared)
+            self._ref_prep.fail.connect(self._on_ref_prep_fail)
+            self._ref_prep.start()
+        else:
+            # 无参考图时跳过整理，直接进入创建流程
+            self._on_ref_prepared([], "")
+
+    def _on_ref_prep_fail(self, err):
+        self._creating = False
+        self.go.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.status.setText("参考图整理失败")
+        self._log("参考图整理失败: %s" % err, "error")
+        _tk = self._task if isinstance(self._task, dict) else {}
+        self._on_task("failed", {"task_id": _tk.get("task_id") or "",
+                                 "error": str(err),
+                                 "elapsed": _tk.get("elapsed")})
+        self.generated.emit(self, False)
+
+    def _on_ref_prepared(self, merged, tmp_dir):
+        """后台参考图整理完成：清理本次一次性临时目录，然后真正创建任务。"""
+        self._ref_tmp_dir = tmp_dir  # 由 _on_created / _on_create_failed 在任务读取完图片后清理
+        self._launch_create(merged)
+
+    def _launch_create(self, ref):
+        """后台整理完成后在 UI 线程发起 CreateTaskWorker。"""
+        key = getattr(self, "_key", None) or _read_api_key()
         cfg = config.AGNES_VIDEO
         try:
             self._create_worker = CreateTaskWorker(
                 api_key=key,
                 base_url=cfg.get("base_url") or config.AGNES_VIDEO_DEFAULT_BASE,
-                prompt=sent_prompt,
+                prompt=self._pending_sent_prompt,
                 seconds=int(self.seconds.currentText()),
-                aspect=_aspect,
+                aspect=self._pending_aspect,
                 negative_prompt=self.negative.text().strip(),
                 image_urls=ref,
                 model=self._model,
@@ -1734,6 +1996,9 @@ class GenAreaWidget(QWidget):
             self._create_worker.done.connect(self._on_created)
             self._create_worker.failed.connect(self._on_create_failed)
             self._create_worker.start()
+            n_ref = len(ref)
+            self._log("本次参考图 %d 张（已后台加标注），任务创建中…" % n_ref)
+            self.status.setText("正在创建任务…")
         except Exception as e:
             self._creating = False
             self.go.setEnabled(True)
@@ -1743,6 +2008,7 @@ class GenAreaWidget(QWidget):
 
     def _on_created(self, res):
         self._creating = False
+        self._cleanup_ref_tmp()
         video_id = res.get("video_id") or ""
         task_id = res.get("task_id") or ""
         if not video_id:
@@ -1770,13 +2036,17 @@ class GenAreaWidget(QWidget):
             poll_interval = 60.0
         else:
             poll_interval = float(cfg.get("interval") or 2.0)
+        # 轮询总超时：视频越长/画质越高耗时越久，给足缓冲；超时必须兜底停线程，避免僵尸轮询
+        _secs = int(self.seconds.currentText() or 10)
+        poll_timeout = max(1200, _secs * 120)
         self._poll = PollWorker(config.get_tokenplan_key_round_robin()
                                 if getattr(config, "is_tokenplan_mode", lambda: False)()
                                 else cfg.get("api_key", ""),
                                 base_url, video_id,
                                 interval=poll_interval,
                                 model=self._model, parent=self,
-                                started_at=rec.get("created_at") or None)
+                                started_at=rec.get("created_at") or None,
+                                timeout_sec=poll_timeout)
         self._poll.progress.connect(self._on_progress)
         self._poll.finished_ok.connect(self._on_done)
         self._poll.failed.connect(self._on_fail)
@@ -1787,6 +2057,7 @@ class GenAreaWidget(QWidget):
 
     def _on_create_failed(self, err):
         self._creating = False
+        self._cleanup_ref_tmp()
         self.go.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.status.setText("创建任务失败")
@@ -1812,6 +2083,10 @@ class GenAreaWidget(QWidget):
 
     def _on_progress(self, st):
         prog = st.get("progress")
+        # 进度值没变就完全跳过（不刷新状态文字/历史/任务面板），降低每 tick 无谓开销
+        if getattr(self, "_last_prog", None) == prog:
+            return
+        self._last_prog = prog
         txt = "生成中…"
         if prog is not None:
             txt += " %s" % prog

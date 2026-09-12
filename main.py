@@ -656,6 +656,7 @@ class DownloadWorker(QThread):
             if self._stop.is_set():
                 break
             self.item_status.emit(row, "下载中…", 0)
+            self._cur_row = row
             self.log_msg.emit(f"下载: {media_url}", "info")
             try:
                 out_path = self._download_one(media_url, referer, is_m3u8, default_title)
@@ -738,7 +739,16 @@ class DownloadWorker(QThread):
 
         if is_m3u8 or ".m3u8" in media_url.lower().split("?")[0]:
             out_path = self._select_free_path(os.path.join(self.output_dir, base + ".mp4"))
-            return self._m3u8.download(media_url, out_path)
+            # M3U8 分片：按 current/total 回传百分比，但加时间窗节流（0.15s 内只发一次），
+            # 避免分片很多时高频 emit 刷 UI（P2）
+            last_emit = [0.0]
+            def m3u8_prog(_message, current, total, _fname):
+                if total and current > 0:
+                    now = time.time()
+                    if now - last_emit[0] >= 0.15 or int(min(1.0, current / total) * 100) >= 100:
+                        last_emit[0] = now
+                        self._emit_progress(min(1.0, current / total))
+            return self._m3u8.download(media_url, out_path, progress_callback=m3u8_prog)
 
         # 普通媒体直下（mp4/webm 等），携带 Referer 防盗链
         ext = self._pick_ext(media_url)
@@ -747,6 +757,7 @@ class DownloadWorker(QThread):
         resp.raise_for_status()
         total = int(resp.headers.get("content-length", 0) or 0)
         got = 0
+        last_pct = -1
         with open(out_path, "wb") as f:
             for chunk in resp.iter_content(65536):
                 if self._stop.is_set():
@@ -757,12 +768,20 @@ class DownloadWorker(QThread):
                     f.write(chunk)
                     got += len(chunk)
                     if total:
-                        self._emit_progress(got / total)
+                        # 仅在整数百分比变化时才刷新 UI，避免 64KB 逐块高频发信号
+                        pct = int(min(1.0, got / total) * 100)
+                        if pct != last_pct:
+                            last_pct = pct
+                            self._emit_progress(got / total)
         return out_path
 
     def _emit_progress(self, ratio):
-        # 通过信号占位：进度列由调用方自行置满
-        pass
+        """把当前条目的真实下载进度(0~1)映射到进度列/进度条。M3U8/直下共用。"""
+        row = getattr(self, "_cur_row", None)
+        if row is None:
+            return
+        pct = int(max(0.0, min(1.0, ratio)) * 100)
+        self.item_status.emit(row, "下载中 %d%%" % pct, pct)
 
 
 # ---------------- 批量提取挂件：无边框悬浮窗 + 全局快捷键 ----------------
@@ -1659,29 +1678,146 @@ class AssetAiWorker(QThread):
 
     @staticmethod
     def _extract_json_array(raw):
-        """从模型输出中稳健解析 JSON 数组：剥掉可能的代码块/前后缀。"""
+        """从模型输出中稳健解析 JSON 数组。
+        兼容 (a) 代码块/前后缀 (b) 弯引号“ ” ‘ ’ (c) 字符串值内部未转义双引号 (d) 全角标点。
+        逐对象逐字符修复后再解析，尽量不依赖 LLM 配合。"""
         s = (raw or "").strip()
         s = re.sub(r"^```(?:json)?\s*", "", s)
         s = re.sub(r"\s*```$", "", s)
-        try:
-            return json.loads(s)
-        except Exception:
-            pass
-        # 兼容模型把引号输出成中文弯引号(“ ” ‘ ’)的情形，否则前后引号不配对无法解析
-        s = (s.replace("\u201c", '"').replace("\u201d", '"')
-              .replace("\u2018", "'").replace("\u2019", "'"))
-        try:
-            return json.loads(s)
-        except Exception:
-            pass
-        # 找不到 JSON 时退回：截取首个 [ 到最后一个 ]
-        a, b = s.find("["), s.rfind("]")
-        if a >= 0 and b > a:
+        s = s.strip()
+
+        def try_parse(t):
             try:
-                return json.loads(s[a:b + 1])
+                v = json.loads(t)
+                if isinstance(v, list):
+                    return v
             except Exception:
-                raise RuntimeError("AI 返回的不是合法 JSON 数组：%s" % s[:200])
-        raise RuntimeError("AI 未返回 JSON 数组：%s" % s[:200])
+                pass
+            return None
+
+        # 直接试一次（已经规范时）
+        r = try_parse(s)
+        if r is not None:
+            return r
+
+        # 全角标点归一化（句号/分号/冒号/逗号）
+        s2 = (s.replace("\u3002", ".").replace("\uff1b", ";")
+               .replace("\uff1a", ":").replace("\uff0c", ","))
+        r = try_parse(s2)
+        if r is not None:
+            return r
+
+        # 弯引号归一化：把“ ” 都替换成 "（JSON 双引号），‘ ’ 替换成 '
+        s3 = (s2.replace("\u201c", '"').replace("\u201d", '"')
+                  .replace("\u2018", "'").replace("\u2019", "'"))
+        r = try_parse(s3)
+        if r is not None:
+            return r
+
+        # 定位 JSON 数组范围 [ ... ]
+        a, b = s3.find("["), s3.rfind("]")
+        if a < 0 or b <= a:
+            # 可能是 {"name":...} 单个对象缺外层 []，或整体缺失
+            r = try_parse(s3)
+            if r is not None:
+                return [r]
+            raise RuntimeError("AI 未返回 JSON 数组：%s" % s[:500])
+
+        seg = s3[a:b + 1]
+        r = try_parse(seg)
+        if r is not None:
+            return r
+
+        # 逐对象修复：从 [ 后到 ] 前扫描，按 { } 配对切块
+        inner = seg[1:-1]
+        objs = []
+        depth = 0
+        cur = ""
+        for ch in inner:
+            if ch == '{':
+                depth += 1
+                cur += ch
+                continue
+            elif ch == '}':
+                depth -= 1
+                cur += ch
+                if depth == 0:
+                    objs.append(cur)
+                    cur = ""
+                continue
+            else:
+                if depth >= 1:
+                    cur += ch
+
+        repaired = [_repair_json_object(ob) for ob in objs]
+        cand = "[" + ",".join(repaired) + "]"
+        r = try_parse(cand)
+        if r is not None:
+            return r
+        raise RuntimeError("AI 返回的不是合法 JSON 数组：%s" % s[:500])
+
+
+def _repair_json_object(ob):
+    """把 { ... } 块修复成合法 JSON 对象字符串。
+    逐键值对解析：值字符串贪婪匹配到本对象最后一个未转义双引号，
+    把内容里所有未转义的 " 转义成 \\"。这是"逐对象贪婪到末尾"策略，
+    能正确处理模型在字符串值内部塞进未转义双引号的常见情况。"""
+    out = ['{']
+    body = ob[1:-1]  # 去掉外层 { }
+    pairs = []
+    i = 0
+    n = len(body)
+    while i < n:
+        ch = body[i]
+        if ch in ' \n\t,':
+            i += 1
+            continue
+        # 期望是 "key"
+        if ch != '"':
+            i += 1
+            continue
+        # 读 key 字符串：找下一个未转义 "
+        j = i + 1
+        while j < n:
+            if body[j] == '\\':
+                j += 2
+                continue
+            if body[j] == '"':
+                break
+            j += 1
+        key = body[i+1:j]
+        i = j + 1
+        # 跳过 : 和空白
+        while i < n and body[i] in ' \n\t':
+            i += 1
+        if i < n and body[i] == ':':
+            i += 1
+        while i < n and body[i] in ' \n\t':
+            i += 1
+        # 值字符串：贪婪匹配到整个 body 的最后一个 "
+        last_quote = body.rfind('"')
+        if last_quote < i:
+            last_quote = i
+        val = body[i:last_quote]
+        # 把 val 里所有未转义的 " 转义成 \"
+        val_fixed = []
+        k = 0
+        while k < len(val):
+            c = val[k]
+            if c == '\\' and k + 1 < len(val):
+                val_fixed.append(c + val[k+1])
+                k += 2
+                continue
+            if c == '"':
+                val_fixed.append('\\"')
+            else:
+                val_fixed.append(c)
+            k += 1
+        pairs.append('"%s":"%s"' % (key, "".join(val_fixed)))
+        i = last_quote + 1
+    out.append(",".join(pairs))
+    out.append('}')
+    return "".join(out)
 
     def run(self):
         try:
@@ -2207,12 +2343,12 @@ class MainWindow(QMainWindow):
         self.global_status.setCursor(Qt.PointingHandCursor)
         self.global_status.mousePressEvent = self._global_status_click
         wsbar.addWidget(self.global_status)
-        # 全局「AI 服务」统一配置入口（视频分析 / 视频生成 / 资产生成图 全部在此管理）
-        self.ai_services_btn = QPushButton("⚙ AI 服务")
+        # 全局「设置」入口（统一配置 AI 服务 / 分段设置；状态灯旁，跨页面可见）
+        self.ai_services_btn = QPushButton("⚙ 设置")
         self.ai_services_btn.setObjectName("ghostBtn")
         self.ai_services_btn.setCursor(Qt.PointingHandCursor)
-        self.ai_services_btn.setToolTip("统一配置所有 AI 服务（视频分析 / 视频生成 / 资产生成图），支持任意 OpenAI 兼容接口")
-        self.ai_services_btn.clicked.connect(lambda: self._ai_services_settings(0))
+        self.ai_services_btn.setToolTip("AI 服务（视频分析 / 视频生成 / 资产生成图）与分段设置")
+        self.ai_services_btn.clicked.connect(self._gen_open_settings_menu)
         wsbar.addWidget(self.ai_services_btn)
         # 「重置布局」：把窗口尺寸与内部分割比例恢复到默认（窗口可自由拖拽缩放，忘了拖坏可一键复原）
         self.reset_lay_btn = QPushButton("⤢ 重置布局")
@@ -5049,10 +5185,6 @@ class MainWindow(QMainWindow):
         self.gen_key_lbl = QLabel("未配置 Key")
         self.gen_key_lbl.setStyleSheet("color:#64748b;")
         hd.addWidget(self.gen_key_lbl)
-        self.gen_set = QPushButton("⚙ API 设置")
-        self.gen_set.setObjectName("ghostBtn")
-        self.gen_set.clicked.connect(self._gen_open_settings)
-        hd.addWidget(self.gen_set)
         self.gen_all_btn = QPushButton("⚡ 一键全部生成")
         self.gen_all_btn.setObjectName("accentBtn")
         self.gen_all_btn.setMinimumHeight(34)
@@ -5072,12 +5204,6 @@ class MainWindow(QMainWindow):
                                             "按段一键创建生成区：画面风格自动填入全局提示词框，时长自动填入对应生成区")
         self.gen_split_local_btn.clicked.connect(self._gen_split_local)
         hd.addWidget(self.gen_split_local_btn)
-        self.gen_split_settings_btn = QPushButton("⚙ 分段设置")
-        self.gen_split_settings_btn.setObjectName("ghostBtn")
-        self.gen_split_settings_btn.setMinimumHeight(34)
-        self.gen_split_settings_btn.setToolTip("设置分段模式与多条段头格式预设（每行一条大白话，自动转正则匹配）")
-        self.gen_split_settings_btn.clicked.connect(self._gen_open_segment_settings)
-        hd.addWidget(self.gen_split_settings_btn)
         self.gen_add_ep = QPushButton("➕ 添加剧集")
         self.gen_add_ep.setObjectName("accentBtn")
         self.gen_add_ep.setMinimumHeight(34)
@@ -5960,22 +6086,38 @@ class MainWindow(QMainWindow):
             rec = dict(info)
             rec["status"] = "queued"
             self._gentasks[effective_key] = rec
+            self._gen_tasks_render(force=True)
+            self._gen_tasks_save()
+            return
         elif effective_key in self._gentasks:
             rec = self._gentasks[effective_key]
             if stage == "progress":
+                new_prog = info.get("progress")
+                # 进度未变时不重刷 UI / 不写盘，降低每 tick 的无谓开销
+                if rec.get("progress") == new_prog and rec.get("status") == "processing":
+                    return
                 rec["status"] = "processing"
-                rec["progress"] = info.get("progress")
+                rec["progress"] = new_prog
+                # 状态/进度未变不写盘；只刷新任务面板文字
+                if new_prog == rec.get("_last_saved_prog"):
+                    self._gen_tasks_render()
+                    return
+                rec["_last_saved_prog"] = new_prog
+                self._gen_tasks_render()
+                self._gen_tasks_save()
             elif stage == "completed":
                 rec["status"] = "completed"
                 rec["video_url"] = info.get("video_url", "")
                 rec["local_file"] = info.get("local_file", "")
+                self._gen_tasks_render()
+                self._gen_tasks_save()
                 if info.get("local_file"):
                     self._gen_files_refresh()
             elif stage == "failed":
                 rec["status"] = "failed"
                 rec["error"] = info.get("error", "")
-        self._gen_tasks_render()
-        self._gen_tasks_save()
+                self._gen_tasks_render()
+                self._gen_tasks_save()
 
     def _gen_tasks_path(self):
         """视频任务记录文件（按项目隔离），退出后重开仍可查看最近任务。"""
@@ -6142,39 +6284,85 @@ class MainWindow(QMainWindow):
     def _resume_save_fail(self, vid, err):
         self._log("接续任务自动保存本地失败: %s" % err, "error")
 
-    def _gen_tasks_render(self):
+    def _gen_tasks_render(self, force=False):
+        """渲染任务面板。
+        默认增量更新（只改已存在条目的文字/颜色，避免每次轮询 tick 都 clear()+逐项重建）；
+        force=True 时全量重建（用于任务面板被外部改动、或需要重新排序/补漏时）。"""
         if not hasattr(self, "gen_task_list"):
             return
-        self.gen_task_list.blockSignals(True)
-        self.gen_task_list.clear()
         total = {"queued": 0, "processing": 0, "completed": 0, "failed": 0}
         for rec in self._gentasks.values():
             st = rec.get("status")
             if st in total:
                 total[st] += 1
-            ep = rec.get("episode")
-            name = "分镜%s" % ep if ep else "生成"
-            model = rec.get("model") or ""
-            stxt = {"queued": "排队中", "processing": "生成中",
-                    "completed": "已完成", "failed": "失败"}.get(st, st)
-            line = "%s · %s · %s" % (name, stxt, model)
-            if rec.get("progress"):
-                line += " %s" % rec["progress"]
-            elapsed = rec.get("elapsed") or ""
-            if elapsed:
-                line += " · %s" % elapsed
-            it = QListWidgetItem(line)
-            it.setForeground(QColor(self._GENTASK_STYLE.get(st, "#cbd5e1")))
-            it.setData(Qt.UserRole, rec)
-            self.gen_task_list.addItem(it)
-        self.gen_task_list.blockSignals(False)
+        if not force:
+            # 数量一致时走增量路径：逐项原地更新文字/颜色，不删不加，避免频繁重建 QListWidget
+            if self.gen_task_list.count() == len(self._gentasks):
+                self.gen_task_list.blockSignals(True)
+                for rec in self._gentasks.values():
+                    key = rec.get("task_id") or rec.get("video_id") or ""
+                    it = self._item_by_data_key(key)
+                    if it is None:
+                        continue
+                    it.setText(self._gen_task_line(rec))
+                    st = rec.get("status")
+                    it.setForeground(QColor(self._GENTASK_STYLE.get(st, "#cbd5e1")))
+                self.gen_task_list.blockSignals(False)
+            else:
+                self._gen_tasks_render(force=True)
+                self._gen_task_cnt_label(total)
+                if total.get("completed"):
+                    self._gen_files_refresh()
+                return
+        else:
+            self.gen_task_list.blockSignals(True)
+            self.gen_task_list.clear()
+            for rec in self._gentasks.values():
+                st = rec.get("status")
+                line = self._gen_task_line(rec)
+                it = QListWidgetItem(line)
+                it.setForeground(QColor(self._GENTASK_STYLE.get(st, "#cbd5e1")))
+                it.setData(Qt.UserRole, rec)
+                it.setData(101, rec.get("task_id") or rec.get("video_id") or "")
+                self.gen_task_list.addItem(it)
+            self.gen_task_list.blockSignals(False)
+        self._gen_task_cnt_label(total)
+        # 有新本地文件时同步刷新列表
+        if total.get("completed"):
+            self._gen_files_refresh()
+
+    def _item_by_data_key(self, key):
+        """按任务 key（存于 UserRole=101）在现有条目里查 item；供增量渲染用。"""
+        if not key:
+            return None
+        n = self.gen_task_list.count()
+        for i in range(n):
+            it = self.gen_task_list.item(i)
+            if it and it.data(101) == key:
+                return it
+        return None
+
+    @staticmethod
+    def _gen_task_line(rec):
+        st = rec.get("status")
+        ep = rec.get("episode")
+        name = "分镜%s" % ep if ep else "生成"
+        model = rec.get("model") or ""
+        stxt = {"queued": "排队中", "processing": "生成中",
+                "completed": "已完成", "failed": "失败"}.get(st, st)
+        line = "%s · %s · %s" % (name, stxt, model)
+        if rec.get("progress"):
+            line += " %s" % rec["progress"]
+        elapsed = rec.get("elapsed") or ""
+        if elapsed:
+            line += " · %s" % elapsed
+        return line
+
+    def _gen_task_cnt_label(self, total):
         cnt = sum(total.values())
         self.gen_task_lbl.setText("共 %d 个任务　·　排队 %d　生成 %d　完成 %d　失败 %d"
                                   % (cnt, total["queued"], total["processing"],
                                      total["completed"], total["failed"]))
-        # 有新本地文件时同步刷新列表
-        if total.get("completed"):
-            self._gen_files_refresh()
 
     def _gen_task_open(self, item):
         # 点击左侧复选框区域时仅切换勾选，不打开任务
@@ -7869,6 +8057,21 @@ class MainWindow(QMainWindow):
 
     def _gen_open_settings(self):
         self._ai_services_settings(1)
+        return
+
+    def _gen_open_settings_menu(self):
+        """顶栏「⚙ 设置」下拉菜单：AI 服务 / 分段设置集中到一个按钮。"""
+        src = getattr(self, "ai_services_btn", None) or getattr(self, "gen_settings_btn", None)
+        if src is None:
+            return
+        m = QMenu(self)
+        act_ai = m.addAction("🎬 AI 服务")
+        act_ai.setToolTip("统一配置 AI 服务（视频分析 / 视频生成 / 资产生成图），支持任意 OpenAI 兼容接口")
+        act_ai.triggered.connect(lambda: self._ai_services_settings(0))
+        act_seg = m.addAction("➗ 分段设置")
+        act_seg.setToolTip("分段模式与段头格式预设（每行一条大白话）")
+        act_seg.triggered.connect(self._gen_open_segment_settings)
+        m.exec_(src.mapToGlobal(QPoint(0, src.height())))
         return
 
     def _gen_start(self):
@@ -9885,6 +10088,20 @@ class MainWindow(QMainWindow):
         if getattr(self, "_gen_batch_run", False):
             idx = len(getattr(self, "_gen_batch_q", []))
             tasks.append(f"批量生成剩{idx}集")
+        # 各生成区卡片自管的生成线程（创建 / 轮询 / 保存）——此前漏检导致生成时状态灯恒显"空闲"
+        ga = getattr(self, "_gen_areas", None) or []
+        _run_areas = 0
+        _save_areas = 0
+        for _a in ga:
+            if getattr(_a, "_creating", False) or \
+               (getattr(_a, "_poll", None) is not None and _a._poll.isRunning()):
+                _run_areas += 1
+            elif getattr(_a, "_save_thread", None) is not None and _a._save_thread.isRunning():
+                _save_areas += 1
+        if _run_areas:
+            tasks.append(f"视频生成·{_run_areas}区")
+        if _save_areas:
+            tasks.append(f"视频保存·{_save_areas}区")
         if tasks:
             desc = "，".join(tasks)
             self.global_status.setText("● " + desc)

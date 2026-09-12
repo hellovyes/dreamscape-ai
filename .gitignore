@@ -30,3 +30,13 @@ prompt-lens-main/
 
 # 历史版本构建脚本（仅保留当前规范文件）
 红果短视频下载器精简v*.spec
+红果短视频下载器精简*.spec
+dreamscape-ai-v*.spec
+
+# 临时调试文件（参考图拼接预览 / 对比图 / 临时脚本）
+_tmp_merge.py
+_tmp_merge2.py
+_label_compare.py
+_label_compare.png
+_merge_preview.png
+_merge_preview2.png

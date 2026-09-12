@@ -318,17 +318,24 @@ class PollWorker(QThread):
     progress = Signal(dict)
     finished_ok = Signal(dict)
     failed = Signal(str)
-    def __init__(self, api_key, base_url, video_id, interval=2.0, model=None, parent=None, started_at=None):
+    def __init__(self, api_key, base_url, video_id, interval=2.0, model=None, parent=None, started_at=None, timeout_sec=3600):
         super().__init__(parent)
         self._args = (api_key, base_url, video_id, max(interval, 1.0), model)
         self._started_at = started_at
         self._stop = False
+        self._timeout_sec = timeout_sec  # 轮询总超时，防止服务端卡死导致僵尸线程
     def stop(self):
         self._stop = True
     def run(self):
         api_key, base_url, video_id, interval, model = self._args
         errors = 0
+        deadline = None
+        if self._timeout_sec and self._timeout_sec > 0:
+            deadline = time.time() + self._timeout_sec
         while not self._stop:
+            if deadline is not None and time.time() > deadline:
+                self.failed.emit("生成轮询超时（%d 分钟未完成），已自动停止" % int(self._timeout_sec // 60))
+                return
             try:
                 st = query_video_status(api_key, base_url, video_id, model)
             except Exception as e:
