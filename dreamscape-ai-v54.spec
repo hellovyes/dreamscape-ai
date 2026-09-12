@@ -1,0 +1,74 @@
+﻿# -*- mode: python ; coding: utf-8 -*-
+# 精简打包 spec：针对性 hiddenimports（而非全量 collect_all），并剔除无关 Qt 模块
+
+hidden_imports = [
+    'PySide6.QtMultimedia',
+    'PySide6.QtMultimediaWidgets',
+    'PySide6.QtWebEngineCore',
+    'PySide6.QtWebEngineWidgets',
+    'PySide6.QtNetwork',
+    'PySide6.QtSvg',
+    'PySide6.QtXml',
+    'urllib',
+    'urllib.request',
+    'urllib.parse',
+    'http',
+    'http.client',
+    'ssl',
+    'threading',
+    'json',
+    'config',
+    'agnes_video',
+    'gen_area',
+    'player_widgets',
+    'link_module',
+    'video_analyzer',
+    'ocr_engine',
+    'downloader',
+    'm3u8_downloader',
+    'mitm_proxy',
+]
+
+a = Analysis(
+    ['main.py'],
+    pathex=[],
+    binaries=[],
+    datas=[('config.py', '.'), ('gen_area.py', '.'), ('agnes_video.py', '.')],
+    hiddenimports=hidden_imports,
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[
+        'tkinter', 'matplotlib', 'setuptools',
+        'PySide6.Qt3DCore', 'PySide6.Qt3DRender', 'PySide6.Qt3DInput',
+        'PySide6.QtBluetooth', 'PySide6.QtQml', 'PySide6.QtQuick',
+        'PySide6.QtUiTools', 'PySide6.QtQuickWidgets',
+        'PySide6.QtVirtualKeyboard', 'PySide6.QtQuickControls2', 'PySide6.QtStateMachine',
+    ],
+    noarchive=False,
+    optimize=0,
+)
+pyz = PYZ(a.pure)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.datas,
+    [],
+    name='dreamscape-ai-v54',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+)
+
+

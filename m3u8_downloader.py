@@ -90,9 +90,10 @@ class M3U8Downloader:
 
             # 处理加密
             key_info = media_obj.keys[0] if media_obj.keys else None
+            self._key = self._fetch_key(key_info, media_playlist_url) if key_info else None
+            self._iv = (key_info.iv if key_info else None) or ""
             self._has_key = bool(
-                key_info and key_info.method not in ("", "NONE")
-                and self._fetch_key(key_info, media_playlist_url) is not None)
+                key_info and key_info.method not in ("", "NONE") and self._key is not None)
 
             # 获取输出目录
             output_dir = os.path.dirname(output_path)
@@ -147,8 +148,8 @@ class M3U8Downloader:
                 if key_info and key_info.method != "NONE" and self._has_key:
                     with open(ts_path, "rb") as f:
                         content = f.read()
-                    dec = self._decrypt_aes(content, key_info, media_playlist_url)
-                    if dec is not None and dec is not content:
+                    dec = self._decrypt_aes(content, self._key, self._iv)
+                    if dec is not None:
                         with open(ts_path, "wb") as f:
                             f.write(dec)
                 self._downloaded += 1
@@ -165,14 +166,18 @@ class M3U8Downloader:
 
             # 合并 TS 文件
             logger.info("合并视频分段...")
+            missing = [p for p in ts_files if not (os.path.exists(p) and os.path.getsize(p) > 0)]
+            if missing:
+                logger.error(f"缺少 {len(missing)} 个视频分片，合并将失败")
+                self._cleanup(temp_dir, ts_files)
+                return None
             with open(output_path, "wb") as outfile:
                 for ts_path in ts_files:
                     if self._stop_event.is_set():
                         self._cleanup(temp_dir, ts_files)
                         return None
-                    if os.path.exists(ts_path):
-                        with open(ts_path, "rb") as infile:
-                            outfile.write(infile.read())
+                    with open(ts_path, "rb") as infile:
+                        outfile.write(infile.read())
 
             # 清理临时文件
             self._cleanup(temp_dir, ts_files)
@@ -184,24 +189,32 @@ class M3U8Downloader:
             logger.error(f"M3U8 下载失败: {e}")
             return None
 
-    def _decrypt_aes(self, data, key_info):
-        """AES-128-CBC 解密"""
+    def _fetch_key(self, key_info, base_url):
+        """取回 AES 密钥（16 字节）。以 base_url 解析 key 的 URI（相对/绝对），
+        失败返回 None。"""
+        try:
+            key_url = key_info.uri if key_info.uri else key_info.key
+            if key_url:
+                key_url = urljoin(base_url, key_url)
+                key_resp = self._session.get(key_url, timeout=self.timeout)
+                key_resp.raise_for_status()
+                return key_resp.content[:16]
+        except Exception as e:
+            logger.warning(f"AES 密钥获取失败: {e}")
+        return None
+
+    def _decrypt_aes(self, data, key, iv_hex):
+        """AES-128-CBC 解密。key 为 16 字节密钥，iv_hex 为 16 进制 IV（可为空）。
+        成功返回明文，失败返回 None（由调用方决定是否降级用密文）。"""
         try:
             from Crypto.Cipher import AES
             from Crypto.Util.Padding import unpad
-
-            # 获取密钥
-            key_url = urljoin(key_info.uri, key_info.key) if key_info.uri else key_info.uri
-            key_resp = self._session.get(key_url, timeout=self.timeout)
-            key = key_resp.content[:16]
-            iv = bytes.fromhex(key_info.iv) if key_info.iv else key
-
+            iv = bytes.fromhex(iv_hex) if iv_hex else bytes(16)
             cipher = AES.new(key, AES.MODE_CBC, iv)
-            decrypted = cipher.decrypt(data)
-            return unpad(decrypted, AES.block_size)
+            return unpad(cipher.decrypt(data), AES.block_size)
         except Exception as e:
-            logger.warning(f"AES 解密失败，使用原始数据: {e}")
-            return data
+            logger.warning(f"AES 解密失败: {e}")
+            return None
 
     def _cleanup(self, temp_dir, ts_files):
         """清理临时文件"""
