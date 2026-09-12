@@ -119,78 +119,212 @@ def _clean_title(title):
     t = re.sub(r"_{2,}", "_", t).strip("_ ")
     return t or (title or "")
 
-# ---------- 现代主题 ----------
-APP_QSS = """
-QMainWindow { background: #eef2f9; }
-QWidget { font-family: "Microsoft YaHei UI","Microsoft YaHei"; font-size: 13px; color: #1f2937; }
+# ---------- 现代主题（双主题：亮色 / 暗色，切换时由 _apply_theme 重写为 self.setStyleSheet） ----------
+# 设计语言：玻璃拟态卡片、柔和多层阴影、14px 圆角、品牌蓝→紫渐变、微交互
+THEME_LIGHT = {
+    "name": "light",
+    "win_bg": "#eef2f9",
+    "surface": "#ffffff",
+    "surface_alt": "#f8fafc",
+    "surface_elev": "rgba(255,255,255,0.72)",
+    "border": "#e5eaf3",
+    "border_soft": "#eef2f7",
+    "text": "#1f2937",
+    "text_muted": "#64748b",
+    "text_faint": "#94a3b8",
+    "accent": "#2563eb",
+    "accent_hover": "#1d4ed8",
+    "accent2": "#7c3aed",
+    "success": "#16a34a",
+    "danger": "#dc2626",
+    "danger_bg": "#fef2f2",
+    "ok_bg": "#f0fdf4",
+    "shadow_card": "rgba(37,99,235,0.08) 0 2px 8px 0, rgba(15,23,42,0.05) 0 6px 20px -8px",
+    "shadow_lift": "rgba(37,99,235,0.12) 0 4px 12px 0, rgba(15,23,42,0.10) 0 12px 32px -12px",
+    "tab_unsel": "#e6ecf6",
+    "tab_unsel_hover": "#f1f5fb",
+    "header_bg": "#f1f5f9",
+    "input_bg": "#fbfdff",
+    "input_border": "#d1d9e6",
+    "table_alt": "#f8fafc",
+    "table_sel": "#dbeafe",
+    "table_sel_text": "#1e3a8a",
+    "progress_bg": "#e5eaf3",
+    "gen_side_bg": "#0f172a",
+    "gen_side_border": "#1e293b",
+    "gen_side_text": "#cbd5e1",
+    "merge_panel_bg": "#eff6ff",
+    "merge_panel_border": "#bfdbfe",
+    "titlebar_bg": "#ffffff",
+    "tooltip_bg": "#ffffff",
+    "tooltip_text": "#1f2937",
+    "tooltip_border": "#d1d9e6",
+    "btn_unsel": "#e6ecf6",
+    "btn_unsel_hover": "#f1f5fb",
+    "gen_side_bg": "#f8fafc",
+    "gen_side_border": "#e5eaf3",
+    "gen_side_text": "#475569",
+    "gen_side_title": "#1f2937",
+    "log_list_bg": "#ffffff",
+    "log_list_text": "#475569",
+}
+THEME_DARK = {
+    "name": "dark",
+    "win_bg": "#0b1220",
+    "surface": "#131b2e",
+    "surface_alt": "#0f172a",
+    "surface_elev": "rgba(19,27,46,0.78)",
+    "border": "#26324f",
+    "border_soft": "#1c2740",
+    "text": "#e2e8f0",
+    "text_muted": "#94a3b8",
+    "text_faint": "#64748b",
+    "accent": "#3b82f6",
+    "accent_hover": "#2563eb",
+    "accent2": "#8b5cf6",
+    "success": "#22c55e",
+    "danger": "#f87171",
+    "danger_bg": "#1f1414",
+    "ok_bg": "#0f2118",
+    "shadow_card": "rgba(0,0,0,0.35) 0 2px 8px 0, rgba(0,0,0,0.25) 0 8px 24px -8px",
+    "shadow_lift": "rgba(0,0,0,0.45) 0 4px 14px 0, rgba(0,0,0,0.40) 0 14px 36px -12px",
+    "tab_unsel": "#101828",
+    "tab_unsel_hover": "#1a2338",
+    "header_bg": "#101828",
+    "input_bg": "#0f172a",
+    "input_border": "#26324f",
+    "table_alt": "#101828",
+    "table_sel": "#1e3a5f",
+    "table_sel_text": "#bfdbfe",
+    "progress_bg": "#1e293b",
+    "gen_side_bg": "#0a0f1c",
+    "gen_side_border": "#1e293b",
+    "gen_side_text": "#cbd5e1",
+    "gen_side_title": "#e2e8f0",
+    "log_list_bg": "#101828",
+    "log_list_text": "#cbd5e1",
+    "merge_panel_bg": "#101a30",
+    "merge_panel_border": "#1e3a5f",
+    "titlebar_bg": "#0f172a",
+    "tooltip_bg": "#1e293b",
+    "tooltip_text": "#e2e8f0",
+    "tooltip_border": "#334155",
+}
 
-QGroupBox { background: #ffffff; border: 1px solid #e5eaf3; border-radius: 12px;
-            margin-top: 15px; padding: 12px 10px 10px 10px; font-weight: 600; font-size: 13px; }
-QGroupBox::title { subcontrol-origin: margin; left: 14px; padding: 0 8px; color: #475569; }
+
+def build_app_qss(t):
+    """按主题变量生成全局 QSS。"""
+    grad = "qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 %s, stop:1 %s)" % (t["accent"], t["accent2"])
+    grad_hover = "qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 %s, stop:1 %s)" % (
+        "#2b6df5" if t["name"] == "light" else "#60a5fa", "#8b47f2" if t["name"] == "light" else "#a78bfa")
+    return """
+QMainWindow { background: %(win_bg)s; }
+QWidget { font-family: "Microsoft YaHei UI","Microsoft YaHei"; font-size: 13px; color: %(text)s; }
+
+QGroupBox { background: %(surface)s; border: 1px solid %(border)s; border-radius: 14px;
+            margin-top: 15px; padding: 12px 10px 10px 10px; font-weight: 600; font-size: 13px;
+            box-shadow: %(shadow_card)s; }
+QGroupBox::title { subcontrol-origin: margin; left: 14px; padding: 0 8px; color: %(text_muted)s; }
 QGroupBox#card { padding-top: 14px; }
-QGroupBox#card::title { color: #2563eb; }
+QGroupBox#card::title { color: %(accent)s; }
 
-QFrame#genAreaCard { background: #ffffff; border: 1px solid #dbe3f0; border-radius: 12px; }
+QFrame#genAreaCard { background: %(surface)s; border: 1px solid %(border)s; border-radius: 14px;
+    box-shadow: %(shadow_card)s; }
 
-QTabBar#navTabBar { background: #eef2f9; }
+QTabBar#navTabBar { background: transparent; }
 QTabBar#navTabBar::tab {
-    min-height: 34px; padding: 6px 20px;
-    font-size: 15px; font-weight: 600; color: #475569;
-    background: #e6ecf6; border: 1px solid #dbe3f0; border-bottom: none;
-    border-top-left-radius: 8px; border-top-right-radius: 8px; margin: 4px 8px 0 0; }
-QTabBar#navTabBar::tab:hover { background: #f1f5fb; }
+    min-height: 36px; padding: 8px 22px;
+    font-size: 15px; font-weight: 600; color: %(text_muted)s;
+    background: %(tab_unsel)s; border: 1px solid %(border)s; border-bottom: none;
+    border-top-left-radius: 10px; border-top-right-radius: 10px; margin: 4px 6px 0 0; }
+QTabBar#navTabBar::tab:hover { background: %(tab_unsel_hover)s; }
 QTabBar#navTabBar::tab:selected {
-    background: #ffffff; color: #1d4ed8; font-weight: 800;
-    border-bottom: 3px solid #2563eb; }
+    background: %(surface)s; color: %(accent)s; font-weight: 800;
+    border-bottom: 3px solid %(accent)s; }
 QTabWidget#navTabs::pane { border: none; top: -1px; }
 
-QLineEdit, QTextEdit, QSpinBox, QComboBox { background: #fbfdff; border: 1px solid #d1d9e6;
-    border-radius: 8px; padding: 7px 10px; selection-background-color: #2563eb; }
-QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QComboBox:focus { border: 2px solid #2563eb; }
-QTextEdit { background: #f8fafc; }
-QComboBox::drop-down { border: none; width: 22px; }
+QTabBar { background: transparent; }
+QTabBar::tab { min-height: 30px; padding: 6px 18px; font-size: 13px; font-weight: 600;
+    color: %(text_muted)s; background: %(tab_unsel)s; border: 1px solid %(border)s;
+    border-bottom: none; border-top-left-radius: 8px; border-top-right-radius: 8px; }
+QTabBar::tab:hover { background: %(tab_unsel_hover)s; }
+QTabBar::tab:selected { background: %(surface)s; color: %(accent)s; font-weight: 700;
+    border-bottom: 2px solid %(accent)s; }
+QTabWidget::pane { border: 1px solid %(border)s; border-radius: 10px; background: %(surface)s;
+    top: -1px; }
 
-QLabel { color: #475569; }
+QLineEdit, QTextEdit, QSpinBox, QComboBox, QDoubleSpinBox {
+    background: %(input_bg)s; border: 1px solid %(input_border)s;
+    border-radius: 10px; padding: 7px 12px; selection-background-color: %(accent)s;
+    transition: border 120ms; }
+QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QComboBox:focus, QDoubleSpinBox:focus {
+    border: 1.5px solid %(accent)s; }
+QTextEdit { background: %(surface_alt)s; }
+QComboBox::drop-down { border: none; width: 26px; }
 
-QPushButton { border: none; border-radius: 8px; padding: 8px 16px;
-             font-weight: 600; background: #eef2f9; color: #334155; }
-QPushButton:hover { background: #e2e8f0; }
-QPushButton#accentBtn { background: #2563eb; color: #ffffff; font-size: 13px; padding: 10px 20px; }
-QPushButton#accentBtn:hover { background: #1d4ed8; }
-QPushButton#primaryBtn { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #2563eb, stop:1 #7c3aed);
-    color: #ffffff; font-size: 15px; font-weight: 700; border-radius: 10px; padding: 15px; }
-QPushButton#primaryBtn:hover { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #2b6df5, stop:1 #8b47f2); }
-QPushButton#primaryBtn:disabled { background: #a9b6e8; }
-QPushButton#stopBtn { background: #ffffff; color: #dc2626; border: 1px solid #f5a6a6; padding: 9px 14px; }
-QPushButton#stopBtn:hover { background: #fef2f2; }
-QPushButton#stopBtn:disabled { color: #f0b4b4; border-color: #f7d7d7; background: #fafafa; }
-QPushButton#startBtn { background: #16a34a; color: #ffffff; border: 1px solid #16a34a; padding: 9px 14px; }
-QPushButton#startBtn:hover { background: #15803d; }
-QPushButton#ghostBtn { background: #f1f5f9; color: #334155; border: 1px solid #e2e8f0; padding: 8px 14px; }
-QPushButton#ghostBtn:hover { background: #e2e8f0; }
+QLabel { color: %(text_muted)s; }
 
-QFrame#vsep { background: #e2e8f0; max-width: 1px; min-width: 1px; margin: 2px 6px; }
+QPushButton { border: none; border-radius: 10px; padding: 9px 18px;
+    font-weight: 600; background: %(tab_unsel)s; color: %(text)s; }
+QPushButton:hover { background: %(tab_unsel_hover)s; }
+QPushButton:pressed { padding-top: 10px; padding-bottom: 8px; }
+QPushButton#accentBtn { background: %(accent)s; color: #ffffff; font-size: 13px;
+    padding: 11px 22px; box-shadow: %(shadow_card)s; }
+QPushButton#accentBtn:hover { background: %(accent_hover)s; }
+QPushButton#primaryBtn { background: %(grad)s; color: #ffffff; font-size: 15px; font-weight: 700;
+    border-radius: 12px; padding: 15px; box-shadow: %(shadow_lift)s; }
+QPushButton#primaryBtn:hover { background: %(grad_hover)s; }
+QPushButton#primaryBtn:disabled { background: %(tab_unsel)s; color: %(text_faint)s; box-shadow: none; }
+QPushButton#stopBtn { background: %(surface)s; color: %(danger)s; border: 1px solid %(danger)s;
+    padding: 9px 14px; }
+QPushButton#stopBtn:hover { background: %(danger_bg)s; }
+QPushButton#stopBtn:disabled { color: %(text_faint)s; border-color: %(border)s; background: %(surface_alt)s; }
+QPushButton#startBtn { background: %(success)s; color: #ffffff; border: 1px solid %(success)s;
+    padding: 9px 14px; }
+QPushButton#startBtn:hover { background: %(success)s; padding: 9px 14px; }
+QPushButton#ghostBtn { background: %(surface_alt)s; color: %(text_muted)s;
+    border: 1px solid %(border)s; padding: 8px 14px; }
+QPushButton#ghostBtn:hover { background: %(tab_unsel_hover)s; color: %(text)s; }
 
-QLabel#breadcrumb { font-size: 12px; font-weight: 600; color: #64748b; }
-QLabel#sbLogCount { font-size: 12px; font-weight: 600; color: #64748b; }
+QFrame#vsep { background: %(border)s; max-width: 1px; min-width: 1px; margin: 2px 6px; }
+QLabel#breadcrumb { font-size: 12px; font-weight: 600; color: %(text_muted)s; }
+QLabel#sbLogCount { font-size: 12px; font-weight: 600; color: %(text_muted)s; }
 
-QTableWidget { background: #ffffff; border: 1px solid #e5eaf3; border-radius: 8px;
-               gridline-color: #eef2f7; alternate-background-color: #f8fafc; }
+QTableWidget { background: %(surface)s; border: 1px solid %(border)s; border-radius: 10px;
+    gridline-color: %(border_soft)s; alternate-background-color: %(table_alt)s; }
 QTableWidget::item { padding: 6px 10px; }
-QTableWidget::item:selected { background: #dbeafe; color: #1e3a8a; }
-QHeaderView::section { background: #f1f5f9; color: #334155; font-weight: 600; border: none;
-    border-bottom: 1px solid #e5eaf3; padding: 7px; }
-QTableCornerButton::section { background: #f1f5f9; border: none; }
+QTableWidget::item:selected { background: %(table_sel)s; color: %(table_sel_text)s; }
+QHeaderView::section { background: %(header_bg)s; color: %(text_muted)s; font-weight: 600; border: none;
+    border-bottom: 1px solid %(border)s; padding: 8px; }
+QTableCornerButton::section { background: %(header_bg)s; border: none; }
 
-QProgressBar { background: #e5eaf3; border: none; border-radius: 6px; height: 10px; }
-QProgressBar::chunk { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #2563eb, stop:1 #7c3aed);
-    border-radius: 6px; }
+QListWidget { background: %(surface)s; color: %(text)s; border: 1px solid %(border)s;
+    border-radius: 10px; }
+QListWidget::item { padding: 5px 8px; border-radius: 6px; }
+QListWidget::item:selected { background: %(table_sel)s; color: %(table_sel_text)s; }
 
-QSlider::groove:horizontal { border: 1px solid #cbd5e1; height: 6px; border-radius: 3px; background: #e5eaf3; }
-QSlider::sub-page:horizontal { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #2563eb, stop:1 #7c3aed);
-    border-radius: 3px; }
-QSlider::handle:horizontal { width: 16px; margin: -6px 0; border-radius: 8px; background: #ffffff;
-    border: 1px solid #c9d4e3; }
+QProgressBar { background: %(progress_bg)s; border: none; border-radius: 8px; height: 12px; }
+QProgressBar::chunk { background: %(grad)s; border-radius: 8px; }
+
+QSlider::groove:horizontal { border: 1px solid %(border)s; height: 6px; border-radius: 3px;
+    background: %(progress_bg)s; }
+QSlider::sub-page:horizontal { background: %(grad)s; border-radius: 3px; }
+QSlider::handle:horizontal { width: 18px; margin: -7px 0; border-radius: 9px;
+    background: %(surface)s; border: 2px solid %(accent)s; }
+
+QCheckBox { spacing: 8px; color: %(text)s; }
+QCheckBox::indicator { width: 16px; height: 16px; border-radius: 5px;
+    border: 1.5px solid %(input_border)s; background: %(input_bg)s; }
+QCheckBox::indicator:checked { background: %(accent)s; border-color: %(accent)s; }
+
+QScrollBar:vertical { background: transparent; width: 10px; margin: 0; }
+QScrollBar::handle:vertical { background: %(border)s; border-radius: 5px; min-height: 30px; }
+QScrollBar::handle:vertical:hover { background: %(text_faint)s; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QScrollBar:horizontal { background: transparent; height: 10px; margin: 0; }
+QScrollBar::handle:horizontal { background: %(border)s; border-radius: 5px; min-width: 30px; }
+QScrollBar::handle:horizontal:hover { background: %(text_faint)s; }
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
 
 QWidget#playerBar { background: transparent; }
 QWidget#playerBar QLabel#playTime { background: transparent; color: #ffffff; font-size: 12px;
@@ -202,27 +336,45 @@ QWidget#playerBar QSlider::handle:horizontal { width: 16px; margin: -6px 0; bord
     background: #ffffff; border: 2px solid rgba(255, 255, 255, 0.6); }
 QPushButton#volBtn { border: none; background: transparent; padding: 4px; }
 QPushButton#volBtn:hover { background: rgba(255, 255, 255, 0.18); border-radius: 6px; }
-QWidget#volPopup { background: rgba(15, 23, 42, 0.62); border-radius: 8px; }
+QWidget#volPopup { background: rgba(15, 23, 42, 0.72); border-radius: 10px; }
 QWidget#volPopup QSlider::groove:vertical { border: none; width: 4px; border-radius: 2px;
     background: rgba(255, 255, 255, 0.32); }
 QWidget#volPopup QSlider::sub-page:vertical { background: #ffffff; border-radius: 2px; }
 QWidget#volPopup QSlider::handle:vertical { height: 16px; margin: 0 -6px; border-radius: 8px;
     background: #ffffff; border: 2px solid rgba(255, 255, 255, 0.6); }
 
-QPlainTextEdit#logView { background: #0f172a; color: #cbd5e1; border: none; border-radius: 8px;
-    font-family: "Consolas","Microsoft YaHei UI"; font-size: 12px; padding: 6px; }
+QPlainTextEdit#logView { background: %(gen_side_bg)s; color: %(gen_side_text)s;
+    border: 1px solid %(gen_side_border)s; border-radius: 10px;
+    font-family: "Consolas","Microsoft YaHei UI"; font-size: 12px; padding: 8px; }
 QWidget#appBody { background: transparent; }
 QScrollArea#epScroll { background: transparent; border: none; }
 QScrollArea#epScroll > QWidget > QWidget { background: transparent; }
-QFrame#titleBar { background: #ffffff; border-bottom: 1px solid #e2e8f0; }
+QFrame#titleBar { background: %(titlebar_bg)s; border-bottom: 1px solid %(border)s; }
 QFrame#titleBar QLabel { background: transparent; }
-QPushButton#titleBtn { background: transparent; border: none; color: #94a3b8; font-size: 16px;
-    border-radius: 6px; padding: 0 10px; min-width: 28px; min-height: 26px; }
-QPushButton#titleBtn:hover { background: #e2e8f0; color: #334155; }
-QPushButton#titleBtnClose { background: transparent; border: none; color: #94a3b8; font-size: 15px;
-    border-radius: 6px; padding: 0 10px; min-width: 28px; min-height: 26px; }
+QPushButton#titleBtn { background: transparent; border: none; color: %(text_faint)s; font-size: 16px;
+    border-radius: 8px; padding: 0 10px; min-width: 30px; min-height: 28px; }
+QPushButton#titleBtn:hover { background: %(tab_unsel_hover)s; color: %(text)s; }
+QPushButton#titleBtnClose { background: transparent; border: none; color: %(text_faint)s; font-size: 15px;
+    border-radius: 8px; padding: 0 10px; min-width: 30px; min-height: 28px; }
 QPushButton#titleBtnClose:hover { background: #ef4444; color: #ffffff; }
-QToolTip { background: #ffffff; color: #1f2937; border: 1px solid #d1d9e6; padding: 4px; }
+QToolTip { background: %(tooltip_bg)s; color: %(tooltip_text)s; border: 1px solid %(tooltip_border)s;
+    border-radius: 8px; padding: 6px 8px; }
+QMenu { background: %(surface)s; color: %(text)s; border: 1px solid %(border)s; border-radius: 10px;
+    padding: 6px; }
+QMenu::item { padding: 7px 14px; border-radius: 7px; }
+QMenu::item:selected { background: %(tab_unsel_hover)s; color: %(accent)s; }
+""" % dict(t, grad=grad, grad_hover=grad_hover)
+
+
+APP_QSS = build_app_qss(THEME_LIGHT)  # 默认亮色（_apply_theme 会在运行时重建）
+
+# ---- 微交互 toast：临时操作提示（右下角浮层，自动淡出） ----
+TOAST_QSS = """
+QFrame#toast { background: %(surface_elev)s; border: 1px solid %(border)s; border-radius: 12px;
+    box-shadow: %(shadow_lift)s; }
+QLabel#toastText { color: %(text)s; font-size: 13px; font-weight: 600; }
+QLabel#toastOk { color: %(success)s; font-size: 13px; font-weight: 700; }
+QLabel#toastErr { color: %(danger)s; font-size: 13px; font-weight: 700; }
 """
 
 # ---- 窗口尺寸策略（可自由调节：非全屏、非最大化，默认按屏幕可用区自适应）----
@@ -1961,7 +2113,10 @@ class MainWindow(QMainWindow):
         self._batch_urls = []
         self._batch_idx = -1
         self._load_sign = None
-        self.setStyleSheet(APP_QSS)
+        self._theme = "light"
+        self._settings = QSettings("Trae", "dreamscape-ai")
+        self._theme = self._settings.value("theme", "light", type=str) or "light"
+        self._apply_theme(self._theme)
         self._build_ui()
         self._init_window_geometry()     # 窗口尺寸/位置：恢复上次或按屏幕自适应（不全屏）
         self._setup_web_view()
@@ -2377,6 +2532,13 @@ class MainWindow(QMainWindow):
         self.reset_lay_btn.setToolTip("恢复默认窗口大小与内部面板比例（窗口本来就支持自由拖拽缩放）")
         self.reset_lay_btn.clicked.connect(self._reset_layout)
         wsbar.addWidget(self.reset_lay_btn)
+        # 「主题切换」：亮色/暗色全局切换，偏好会写入 QSettings，下次启动自动恢复
+        self.theme_btn = QPushButton("🌙 深色")
+        self.theme_btn.setObjectName("ghostBtn")
+        self.theme_btn.setCursor(Qt.PointingHandCursor)
+        self.theme_btn.setToolTip("切换亮色 / 暗色主题")
+        self.theme_btn.clicked.connect(self._toggle_theme)
+        wsbar.addWidget(self.theme_btn)
         self.ws_layout.addLayout(wsbar)
         self.nav_tabs = QTabWidget()
         self.nav_tabs.setObjectName("navTabs")
@@ -3238,6 +3400,7 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self._log(f"已打开项目「{name}」", "ok")
+        self._toast(f"已打开项目「{name}」", "ok")
 
     def _open_project(self, name):
         try:
@@ -3247,6 +3410,7 @@ class MainWindow(QMainWindow):
             self._apply_project_ctx(name)
         except Exception as e:
             self._log(f"打开项目「{name}」失败: {e}", "error")
+            self._toast(f"打开项目失败：{e}", "err")
         # 无论加载是否成功都进入工作区（嗅探 + 生成二级页面）
         self.proj_title.setText(f"📁 {name}")
         self.nav_tabs.setCurrentIndex(0)
@@ -3615,9 +3779,11 @@ class MainWindow(QMainWindow):
                 with open(data[1], "w", encoding="utf-8") as f:
                     f.write(content)
                 self._log(f"已保存: {data[2]}", "ok")
+                self._toast(f"已保存剧本「{data[2]}」", "ok")
                 self.script_status.setText(f"已保存 {data[2]}")
             except Exception as e:
                 self._log(f"保存失败: {e}", "warn")
+                self._toast(f"剧本保存失败：{e}", "err")
             return
         # 未选中文件 → 另存为
         path, _ = QFileDialog.getSaveFileName(
@@ -3629,9 +3795,11 @@ class MainWindow(QMainWindow):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
             self._log(f"已保存: {os.path.basename(path)}", "ok")
+            self._toast(f"已保存剧本「{os.path.basename(path)}」", "ok")
             self._script_refresh()
         except Exception as e:
             self._log(f"保存失败: {e}", "warn")
+            self._toast(f"剧本保存失败：{e}", "err")
 
     def _script_export(self):
         content = self.script_edit.toPlainText().strip()
@@ -3647,8 +3815,10 @@ class MainWindow(QMainWindow):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
             self._log(f"已导出: {path}", "ok")
+            self._toast(f"已导出剧本「{os.path.basename(path)}」", "ok")
         except Exception as e:
             self._log(f"导出失败: {e}", "warn")
+            self._toast(f"剧本导出失败：{e}", "err")
 
     def _script_clear(self):
         self.script_edit.clear()
@@ -5415,7 +5585,9 @@ class MainWindow(QMainWindow):
         side.setObjectName("genSide")
         side.setMinimumWidth(180)
         side.setMaximumWidth(420)
-        side.setStyleSheet("QWidget#genSide{ background:#0f172a; border-left:1px solid #1e293b; }")
+        theme = THEME_DARK if getattr(self, "_theme", "light") == "dark" else THEME_LIGHT
+        side.setStyleSheet("QWidget#genSide{ background:%s; border-left:1px solid %s; }"
+                           % (theme["gen_side_bg"], theme["gen_side_border"]))
         lay = QVBoxLayout(side)
         # 收紧侧栏内边距与分段间距，让播放区/任务区更贴近左边的生成区
         lay.setContentsMargins(3, 6, 3, 6)
@@ -5423,7 +5595,8 @@ class MainWindow(QMainWindow):
 
         # ---- 视频播放区：内嵌播放器已隐藏，点击任务/文件卡片以弹窗播放 ----
         t_play = QLabel("▶ 视频以弹窗播放（点击任务或文件卡片）")
-        t_play.setStyleSheet("color:#64748b; font-weight:800; font-size:11px;")
+        theme = THEME_DARK if getattr(self, "_theme", "light") == "dark" else THEME_LIGHT
+        t_play.setStyleSheet("color:%s; font-weight:800; font-size:11px;" % theme["text_muted"])
         lay.addWidget(t_play)
 
         # 播放器初始化
@@ -5497,18 +5670,21 @@ class MainWindow(QMainWindow):
 
         # ---- 视频任务列表 ----
         t1_lay = QHBoxLayout()
+        theme = THEME_DARK if getattr(self, "_theme", "light") == "dark" else THEME_LIGHT
         t1 = QLabel("📌 视频任务")
-        t1.setStyleSheet("color:#e2e8f0; font-weight:800;")
+        t1.setStyleSheet("color:%s; font-weight:800;" % theme["gen_side_title"])
         t1_lay.addWidget(t1)
         t1_lay.addStretch(1)
         self.gen_task_lbl = QLabel("尚无任务")
-        self.gen_task_lbl.setStyleSheet("color:#94a3b8; font-size:12px;")
+        self.gen_task_lbl.setStyleSheet("color:%s; font-size:12px;" % theme["text_muted"])
         t1_lay.addWidget(self.gen_task_lbl)
         lay.addLayout(t1_lay)
         self.gen_task_list = QListWidget()
         self.gen_task_list.setFrameShape(QFrame.NoFrame)
         self.gen_task_list.setMinimumHeight(90)
-        self.gen_task_list.setStyleSheet("QListWidget{ background:#0f172a; color:#cbd5e1; border:1px solid #1e293b; border-radius:6px; }")
+        self.gen_task_list.setStyleSheet(
+            "QListWidget{ background:%s; color:%s; border:1px solid %s; border-radius:6px; }"
+            % (theme["log_list_bg"], theme["log_list_text"], theme["gen_side_border"]))
         self.gen_task_list.itemClicked.connect(self._gen_task_open)
 
         # ---- 任务区 + 日志区（上下可拖拽分割，日志高度可自由拉动）----
@@ -5557,8 +5733,9 @@ class MainWindow(QMainWindow):
         # 生成日志小窗（合并 dock：Tab 页签「生成日志 / 全部日志」，与嗅探页主日志同源收口）
         gen_log_box = QGroupBox("日志")
         gen_log_box.setStyleSheet(
-            "QGroupBox{ color:#e2e8f0; font-weight:800; border:1px solid #1e293b; border-radius:6px;"
-            " margin-top:8px; } QGroupBox::title{ subcontrol-origin:margin; left:6px; padding:0 3px; }")
+            "QGroupBox{ color:%s; font-weight:800; border:1px solid %s; border-radius:6px;"
+            " margin-top:8px; } QGroupBox::title{ subcontrol-origin:margin; left:6px; padding:0 3px; }"
+            % (theme["gen_side_title"], theme["gen_side_border"]))
         glb = QVBoxLayout(gen_log_box)
         glb.setContentsMargins(4, 4, 4, 4)
         glb.setSpacing(0)
@@ -10206,8 +10383,93 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    def _build_toast_layer(self):
+        """创建右下角轻提示浮层。"""
+        from PySide6.QtWidgets import QFrame as _QFrame
+
+        class _ToastFrame(_QFrame):
+            def __init__(self, parent=None):
+                super().__init__(parent)
+                self.setObjectName("toast")
+                self.setWindowFlags(Qt.ToolTip)
+                self.setAttribute(Qt.WA_TranslucentBackground, True)
+                self._fade = None
+
+            def fade_out(self):
+                if self._fade is None:
+                    self._fade = QTimer(self)
+                    self._fade.setInterval(60)
+                    self._fade.timeout.connect(self.hide)
+                self._fade.start()
+
+        layer = getattr(self, "_toast_layer", None)
+        if layer is None:
+            layer = _ToastFrame(self)
+            self._toast_layer = layer
+        lay = layer.layout()
+        if lay is None:
+            lay = QHBoxLayout(layer)
+            lay.setContentsMargins(14, 10, 14, 10)
+            lay.setSpacing(8)
+        layer.hide()
+        return layer
+
+    def _toast(self, msg, kind="ok"):
+        """右下角浮层提示：成功(ok)/失败(err)/普通(info)，自动消失。"""
+        layer = self._build_toast_layer()
+        lay = layer.layout()
+        if lay is None:
+            lay = QHBoxLayout(layer)
+            lay.setContentsMargins(14, 10, 14, 10)
+            lay.setSpacing(8)
+        while lay.count():
+            it = lay.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.deleteLater()
+        icon = {"ok": "✓", "err": "✗", "info": "ℹ"}.get(kind, "ℹ")
+        lbl = QLabel("%s  %s" % (icon, msg))
+        lbl.setObjectName({"ok": "toastOk", "err": "toastErr", "info": "toastText"}[kind])
+        lay.addWidget(lbl)
+        theme = THEME_DARK if getattr(self, "_theme", "light") == "dark" else THEME_LIGHT
+        layer.setStyleSheet(TOAST_QSS % theme)
+        w = self.window()
+        px, py = w.width() - 320, w.height() - 90
+        layer.move(w.mapToGlobal(QPoint(px, py)))
+        layer.show()
+        layer.raise_()
+        if getattr(layer, "_fade", None) is not None:
+            layer._fade.stop()
+        QTimer.singleShot(2200, layer.fade_out)
+
+    def _apply_theme(self, name="light"):
+        """切换全局主题（light/dark），重新生成 QSS 并持久化偏好。"""
+        self._theme = name
+        theme = THEME_DARK if name == "dark" else THEME_LIGHT
+        self.setStyleSheet(build_app_qss(theme))
+        layer = getattr(self, "_toast_layer", None)
+        if layer is not None:
+            layer.setStyleSheet(TOAST_QSS % theme)
+        side = getattr(self, "gen_side", None)
+        if side is not None:
+            side.setStyleSheet(
+                "QWidget#genSide{ background:%s; border-left:1px solid %s; }"
+                % (theme["gen_side_bg"], theme["gen_side_border"]))
+            if getattr(self, "gen_task_list", None) is not None:
+                self.gen_task_list.setStyleSheet(
+                    "QListWidget{ background:%s; color:%s; border:1px solid %s; border-radius:6px; }"
+                    % (theme["log_list_bg"], theme["log_list_text"], theme["gen_side_border"]))
+        self._settings.setValue("theme", name)
+        btn = getattr(self, "theme_btn", None)
+        if btn is not None:
+            btn.setText("☀ 浅色" if name == "dark" else "🌙 深色")
+
+    def _toggle_theme(self):
+        self._apply_theme("dark" if self._theme == "light" else "light")
+        self._toast("已切换到%s主题" % ("暗色" if self._theme == "dark" else "亮色"), "ok")
+
     def _update_breadcrumb(self):
-        """刷新底部状态栏面包屑：项目 › 页名（› 分集）+ 当前操作区提示。"""
+        """刷新底部状态栏面包屑：项目 › 页名（› 分集）。"""
         if not hasattr(self, "breadcrumb"):
             return
         proj = self.proj_title.text() if hasattr(self, "proj_title") else "未打开项目"
