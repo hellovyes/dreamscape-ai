@@ -25,5 +25,5 @@ python main.py
 ## 打包为 exe（PyInstaller 单文件）
 
 ```bash
-python -m PyInstaller --clean --noconfirm --workpath build --distpath dist 红果短视频下载器精简.spec
+python -m PyInstaller --clean --noconfirm --workpath build --distpath dist dreamscape-ai.spec
 ```
