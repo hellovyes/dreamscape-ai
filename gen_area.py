@@ -1769,42 +1769,67 @@ class GenAreaWidget(QWidget):
         return groups
 
     def _merge_composite(self, group, out_path):
-        """把一组（2~3 张）参考图水平拼接成一张新图，并在每张子图下方用资产名标注，
+        """把一组（2~3 张）参考图拼接成一张新图，并在每张子图下方用资产名标注，
         让模型能按名称把他们对应到剧本里出现的人物/场景/道具。
+        方向感知拼接：横屏图（宽≥高）竖向堆叠，竖屏图（高>宽）横向排列——
+        避免多张横屏横拼出 5:1+ 的极端宽扁图（短边过小会被服务端判为无效媒体）。
         读取失败的子图会被跳过，且其资产名一并跳过（按下标配对，避免错位）。"""
         pairs = []  # [(path, im), ...] 成功读取的（按原顺序）
         for p in group:
             im = QImage(p)
             if im.isNull():
                 continue
-            pairs.append((p, im.scaledToHeight(384, Qt.SmoothTransformation)))
+            pairs.append((p, im))
         if not pairs:
             return None
-        imgs = [im for _, im in pairs]
+        all_vertical = all(im.height() > im.width() for _, im in pairs)
+        if all_vertical:
+            # 竖屏图 → 横向排列：统一高度 768，左右并排，短边保持 768
+            imgs = [im.scaledToHeight(768, Qt.SmoothTransformation) for _, im in pairs]
+        else:
+            # 横屏图 → 竖向堆叠：统一宽度 768，上下排布，短边保持 768
+            imgs = [im.scaledToWidth(768, Qt.SmoothTransformation) for _, im in pairs]
         # 标注参数按子图宽度比例自适应，保证模型清晰可读：
         #   字号 ≈ 子图宽 5.5%（最小 22px），标注条高 ≈ 子图宽 10%（最小 44px），黑字 #111。
         sub_w = min(im.width() for im in imgs)
         font_px = max(22, int(sub_w * 0.055))
         text_h = max(44, int(sub_w * 0.10))
-        total_w = sum(im.width() for im in imgs)
-        canvas = QImage(max(total_w, 1), imgs[0].height() + text_h, QImage.Format_ARGB32)
+        if all_vertical:
+            total_w = sum(im.width() for im in imgs)
+            total_h = imgs[0].height() + text_h
+        else:
+            total_w = imgs[0].width()
+            total_h = sum(im.height() for im in imgs) + len(imgs) * text_h
+        canvas = QImage(max(total_w, 1), max(total_h, 1), QImage.Format_ARGB32)
         canvas.fill(Qt.white)
         painter = QPainter(canvas)
         painter.setRenderHint(QPainter.Antialiasing, True)
-        x = 0
         font = QFont()
         font.setPixelSize(font_px)
         painter.setFont(font)
-        for path, im in pairs:
-            painter.drawImage(x, 0, im)
-            painter.setPen(QPen(QColor("#64748b"), 1.5))
-            painter.drawRect(x, 0, im.width(), im.height())
-            name = self._ref_image_name(path)
-            # 不省略，直接全量居中；字号已足够大，正常宽度都能放得下
-            painter.setPen(QColor("#111111"))
-            painter.drawText(QRect(x + 2, im.height(), im.width() - 4, text_h),
-                             Qt.AlignCenter, name)
-            x += im.width()
+        if all_vertical:
+            x = 0
+            for (path, _), im in zip(pairs, imgs):
+                painter.drawImage(x, 0, im)
+                painter.setPen(QPen(QColor("#64748b"), 1.5))
+                painter.drawRect(x, 0, im.width(), im.height())
+                name = self._ref_image_name(path)
+                # 不省略，直接全量居中；字号已足够大，正常宽度都能放得下
+                painter.setPen(QColor("#111111"))
+                painter.drawText(QRect(x + 2, im.height(), im.width() - 4, text_h),
+                                 Qt.AlignCenter, name)
+                x += im.width()
+        else:
+            y = 0
+            for (path, _), im in zip(pairs, imgs):
+                painter.drawImage(0, y, im)
+                painter.setPen(QPen(QColor("#64748b"), 1.5))
+                painter.drawRect(0, y, im.width(), im.height())
+                name = self._ref_image_name(path)
+                painter.setPen(QColor("#111111"))
+                painter.drawText(QRect(2, y + im.height(), im.width() - 4, text_h),
+                                 Qt.AlignCenter, name)
+                y += im.height() + text_h
         painter.end()
         try:
             os.makedirs(os.path.dirname(out_path), exist_ok=True)

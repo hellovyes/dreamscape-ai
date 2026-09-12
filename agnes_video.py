@@ -15,7 +15,12 @@ def _headers(api_key):
             "Content-Type": "application/json"}
 
 def create_video_task(api_key, base_url, prompt, seconds="10", aspect="16:9",
-                      negative_prompt="", image_urls=None, model=None):
+                      negative_prompt="", image_urls=None, model=None, mode=None):
+    """mode: "reference"（多图参考，images 数组）/"keyframe"（首尾帧，官方验证路径）。
+
+    参考官方 agnes-ai-studio：keyframe 用 first_frame/last_frame（各1张），
+    本地图以 base64 data URI 内联直传，不依赖第三方图床。
+    """
     base = (base_url or AGNES_DEFAULT_BASE).rstrip("/")
     model = model or AGNES_VIDEO_MODEL
     text = (prompt or "").strip()
@@ -25,15 +30,24 @@ def create_video_task(api_key, base_url, prompt, seconds="10", aspect="16:9",
         secs = max(4, min(12, int(seconds)))
     except (ValueError, TypeError):
         secs = 10
+    urls = [u.strip() for u in (image_urls or []) if u and u.strip()]
+    if mode == "keyframe" and urls:
+        gen_mode = "keyframe"
+    else:
+        gen_mode = "reference" if urls else "text"
     payload = {"model": model, "prompt": text,
-               "mode": "reference" if image_urls else "text",
+               "mode": gen_mode,
                "seconds": str(secs), "size": "720P",
                "aspect_ratio": aspect}
     if negative_prompt and negative_prompt.strip():
         payload["prompt"] = text + "\n负面提示词（请避免）：" + negative_prompt.strip()
-    if image_urls:
-        urls = [u.strip() for u in image_urls if u and u.strip()]
-        if urls:
+    if urls:
+        if gen_mode == "keyframe":
+            # 官方 keyframe 模式：首帧 + 尾帧（最多 2 张），本地 data URI 可直接解析
+            payload["first_frame"] = urls[0]
+            if len(urls) >= 2:
+                payload["last_frame"] = urls[-1]
+        else:
             payload["images"] = urls
     data = json.dumps(payload).encode("utf-8")
 
@@ -110,10 +124,12 @@ def _multipart_upload(url, field_name, file_path, extra=None, timeout=120):
         return resp.read().decode("utf-8", "replace")
 
 
-def image_to_data_uri(path, max_edge=1024, quality=85):
+def image_to_data_uri(path, max_edge=1024, quality=85, min_edge=384):
     """把本地图片压缩并编码为 base64 data URI（无需公网上传）。
 
     长边缩到 max_edge、JPEG 质量 quality，控制 JSON 体积；失败则抛错。
+    短边保护：若按长边缩放后短边 < min_edge（极端宽高比图会被 Agnes 服务端
+    判为无效媒体，报「media URL could not be downloaded」），改以短边为准缩放。
     """
     if not os.path.exists(path):
         raise RuntimeError("本地图片不存在：%s" % path)
@@ -121,11 +137,14 @@ def image_to_data_uri(path, max_edge=1024, quality=85):
     if img.isNull():
         raise RuntimeError("无法读取图片（格式不支持或文件损坏）：%s" % path)
     w, h = img.width(), img.height()
+    scale = 1.0
     if max(w, h) > max_edge:
-        if w >= h:
-            img = img.scaledToWidth(max_edge, Qt.SmoothTransformation)
-        else:
-            img = img.scaledToHeight(max_edge, Qt.SmoothTransformation)
+        scale = min(scale, max_edge / float(max(w, h)))
+    if min(w, h) * scale < min_edge:
+        scale = max(scale, min_edge / float(min(w, h)))
+    if scale != 1.0:
+        img = img.scaled(max(1, int(round(w * scale))), max(1, int(round(h * scale))),
+                         Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
     # 关键：JPEG 不支持透明通道。带 alpha 的 PNG（白模/抠图素材）若直接转 JPEG，
     # Qt 会把透明区填成纯黑，Agnes 服务端会把"黑底图"判为无效媒体而返回
     # 「media URL could not be downloaded or did not return valid supported media」。
@@ -341,15 +360,31 @@ class CreateTaskWorker(QThread):
                          if not os.path.exists(p) and str(p).strip().startswith("http")]
 
             if local:
-                # 首选：本地图压缩成 base64 data URI 内联传参，无需公网
+                # 首选：本地图压缩成 base64 data URI 内联传参（reference 多图模式，无需公网）
                 data_uris = [image_to_data_uri(p) for p in local]
                 try:
                     res = create_video_task(api_key, base_url, prompt, seconds, aspect,
                                             neg, data_uris + http_urls or None, model)
                     self.done.emit(res)
                     return
-                except Exception:
-                    # base64 未被接口接受，回退：上传公网图床再重试
+                except RuntimeError as e:
+                    # reference 的 images 要求公网可下载 URL，data URI 会被服务端判为
+                    # 「media URL could not be downloaded」而 400。此时自动降级为官方
+                    # agnes-ai-studio 验证过的 keyframe 首尾帧模式（first/last_frame
+                    # 可直接解析 data URI，最多取首帧+尾帧 2 张），彻底绕开第三方图床。
+                    emsg = str(e)
+                    if "media URL" in emsg or "could not be downloaded" in emsg \
+                            or "valid supported media" in emsg:
+                        # keyframe 模式单首帧（1张）或首尾帧（≥2张）均为官方合法用法
+                        print("[CreateTaskWorker] reference+data URI 被拒，自动降级 keyframe 首尾帧模式"
+                              "（第1张 → first_frame%s）"
+                              % ("，最后1张 → last_frame" if len(data_uris) >= 2 else ""))
+                        res = create_video_task(api_key, base_url, prompt, seconds, aspect,
+                                                neg, data_uris + http_urls or None, model,
+                                                mode="keyframe")
+                        self.done.emit(res)
+                        return
+                    # 非媒体类错误或仅 1 张图：走公网图床回退（最后手段）
                     public = [upload_image_to_public(p) for p in local]
                     res = create_video_task(api_key, base_url, prompt, seconds, aspect,
                                             neg, public + http_urls or None, model)
