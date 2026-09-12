@@ -25,6 +25,7 @@ class M3U8Downloader:
         self._stop_event = threading.Event()
         self._downloaded = 0
         self._total = 0
+        self._has_key = False
 
     def stop(self):
         """停止下载"""
@@ -89,6 +90,9 @@ class M3U8Downloader:
 
             # 处理加密
             key_info = media_obj.keys[0] if media_obj.keys else None
+            self._has_key = bool(
+                key_info and key_info.method not in ("", "NONE")
+                and self._fetch_key(key_info, media_playlist_url) is not None)
 
             # 获取输出目录
             output_dir = os.path.dirname(output_path)
@@ -115,30 +119,38 @@ class M3U8Downloader:
                 ts_path = os.path.join(temp_dir, ts_filename)
                 ts_files.append(ts_path)
 
-                content = None
+                ok = False
                 for attempt in range(1, 4):
                     if self._stop_event.is_set():
                         break
                     try:
                         resp = self._session.get(seg_url, timeout=self.timeout, stream=True)
-                        if resp.status_code == 200 and resp.content:
-                            content = resp.content
+                        if resp.status_code == 200:
+                            with open(ts_path, "wb") as f:
+                                for chunk in resp.iter_content(65536):
+                                    if chunk:
+                                        f.write(chunk)
+                            # 校验非空，缺数据视为失败以触发重试
+                            if os.path.getsize(ts_path) > 0:
+                                ok = True
                             break
                         logger.warning(f"分段 {i} 下载失败: HTTP {resp.status_code}（第 {attempt} 次）")
                     except Exception as e:
                         logger.warning(f"分段 {i} 下载异常: {e}（第 {attempt} 次）")
                     time.sleep(1)
-                if content is None:
+                if not ok:
                     logger.error(f"分段 {i} 连续 3 次下载失败，取消整个下载并清理临时文件")
                     self._cleanup(temp_dir, ts_files)
                     return None
 
-                # 解密
-                if key_info and key_info.method != "NONE":
-                    content = self._decrypt_aes(content, key_info)
-
-                with open(ts_path, "wb") as f:
-                    f.write(content)
+                # 解密（若启用且密钥有效）：读回刚写的分片再原地覆盖
+                if key_info and key_info.method != "NONE" and self._has_key:
+                    with open(ts_path, "rb") as f:
+                        content = f.read()
+                    dec = self._decrypt_aes(content, key_info, media_playlist_url)
+                    if dec is not None and dec is not content:
+                        with open(ts_path, "wb") as f:
+                            f.write(dec)
                 self._downloaded += 1
 
                 # 更新进度（统一回调签名：message, current, total, filename）
