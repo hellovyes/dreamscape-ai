@@ -3,7 +3,7 @@
 import json, os, time, shutil, mimetypes
 import urllib.error, urllib.parse, urllib.request
 from PySide6.QtCore import QThread, Signal, QBuffer, QByteArray, QIODevice, Qt
-from PySide6.QtGui import QImage
+from PySide6.QtGui import QImage, QPainter
 
 AGNES_VIDEO_MODEL = "agnes-video-2.5-flash"
 AGNES_DEFAULT_BASE = "https://apihub.agnes-ai.com/v1"
@@ -126,6 +126,17 @@ def image_to_data_uri(path, max_edge=1024, quality=85):
             img = img.scaledToWidth(max_edge, Qt.SmoothTransformation)
         else:
             img = img.scaledToHeight(max_edge, Qt.SmoothTransformation)
+    # 关键：JPEG 不支持透明通道。带 alpha 的 PNG（白模/抠图素材）若直接转 JPEG，
+    # Qt 会把透明区填成纯黑，Agnes 服务端会把"黑底图"判为无效媒体而返回
+    # 「media URL could not be downloaded or did not return valid supported media」。
+    # 这里先把 ARGB 合成到纯白背景，透明部分变成白底，转 JPEG 后始终是有效图片。
+    if img.hasAlphaChannel():
+        flat = QImage(img.size(), QImage.Format_RGB32)
+        flat.fill(Qt.white)
+        p = QPainter(flat)
+        p.drawImage(0, 0, img)
+        p.end()
+        img = flat
     ba = QByteArray()
     buf = QBuffer(ba)
     if not buf.open(QIODevice.WriteOnly):
@@ -149,6 +160,30 @@ def upload_image_to_public(path):
     if not os.path.exists(path):
         raise RuntimeError("本地图片不存在：%s" % path)
 
+    # 与 image_to_data_uri 一致：透明 PNG 先合成白底，并压缩到 max_edge，
+    # 保证图床 URL 返回的是服务端能稳定下载的有效 JPEG（避免黑底/超大图被 400）。
+    try:
+        from PySide6.QtGui import QImage, QPainter
+        from PySide6.QtCore import Qt
+        img = QImage(path)
+        if not img.isNull():
+            w, h = img.width(), img.height()
+            if max(w, h) > 1024:
+                img = (img.scaledToWidth(1024, Qt.SmoothTransformation)
+                       if w >= h else img.scaledToHeight(1024, Qt.SmoothTransformation))
+            if img.hasAlphaChannel():
+                flat = QImage(img.size(), QImage.Format_RGB32)
+                flat.fill(Qt.white)
+                p = QPainter(flat)
+                p.drawImage(0, 0, img)
+                p.end()
+                img = flat
+            upload_path = path + ".pub.jpg"
+            img.save(upload_path, "JPEG", 85)
+            path = upload_path
+    except Exception:
+        pass
+
     # 1) tmpfiles.org —— 返回 JSON，需要 /dl/ 才是直链
     try:
         text = _multipart_upload("https://tmpfiles.org/api/v1/upload", "file", path)
@@ -157,6 +192,7 @@ def upload_image_to_public(path):
         if url:
             if "/dl/" not in url:
                 url = url.replace("https://tmpfiles.org/", "https://tmpfiles.org/dl/", 1)
+            _cleanup_public_tmp(path)
             return url
     except Exception:
         pass
@@ -166,6 +202,7 @@ def upload_image_to_public(path):
         text = _multipart_upload("https://catbox.moe/user/api.php", "fileToUpload", path,
                                  extra={"reqtype": "fileupload"}).strip()
         if text.startswith("http"):
+            _cleanup_public_tmp(path)
             return text
     except Exception:
         pass
@@ -174,11 +211,22 @@ def upload_image_to_public(path):
     try:
         text = _multipart_upload("https://0x0.st", "file", path).strip()
         if text.startswith("http"):
+            _cleanup_public_tmp(path)
             return text
     except Exception:
         pass
 
     raise RuntimeError("本地图片上传到公网图床失败，请检查网络，或改用纯文本模式生成")
+
+
+def _cleanup_public_tmp(path):
+    """删除 upload_image_to_public 生成的白底压缩临时文件（path.pub.jpg）。"""
+    try:
+        tmp = path + ".pub.jpg"
+        if tmp != path and os.path.exists(tmp):
+            os.remove(tmp)
+    except Exception:
+        pass
 
 _DONE_STATUS = {"completed", "succeed", "succeeded", "success", "done", "finished"}
 _FAIL_STATUS = {"failed", "failure", "error", "cancelled", "canceled"}

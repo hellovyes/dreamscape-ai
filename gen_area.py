@@ -1997,7 +1997,11 @@ class GenAreaWidget(QWidget):
             self._create_worker.failed.connect(self._on_create_failed)
             self._create_worker.start()
             n_ref = len(ref)
-            self._log("本次参考图 %d 张（已后台加标注），任务创建中…" % n_ref)
+            n_orig = len(self._pending_ref_paths)
+            if n_orig > n_ref:
+                self._log("本次参考图 %d 张原图 → 已合并为 %d 张（带标注）发送，任务创建中…" % (n_orig, n_ref))
+            else:
+                self._log("本次参考图 %d 张（已加标注），任务创建中…" % n_ref)
             self.status.setText("正在创建任务…")
         except Exception as e:
             self._creating = False
