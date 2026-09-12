@@ -8,6 +8,7 @@
   → 勾选后下载(mp4 直下 / m3u8 自动合并)
 """
 import os
+import html
 import re
 import sys
 import json
@@ -167,6 +168,11 @@ QPushButton#startBtn { background: #16a34a; color: #ffffff; border: 1px solid #1
 QPushButton#startBtn:hover { background: #15803d; }
 QPushButton#ghostBtn { background: #f1f5f9; color: #334155; border: 1px solid #e2e8f0; padding: 8px 14px; }
 QPushButton#ghostBtn:hover { background: #e2e8f0; }
+
+QFrame#vsep { background: #e2e8f0; max-width: 1px; min-width: 1px; margin: 2px 6px; }
+
+QLabel#breadcrumb { font-size: 12px; font-weight: 600; color: #64748b; }
+QLabel#sbLogCount { font-size: 12px; font-weight: 600; color: #64748b; }
 
 QTableWidget { background: #ffffff; border: 1px solid #e5eaf3; border-radius: 8px;
                gridline-color: #eef2f7; alternate-background-color: #f8fafc; }
@@ -1770,6 +1776,30 @@ class AssetAiWorker(QThread):
             return r
         raise RuntimeError("AI 返回的不是合法 JSON 数组：%s" % s[:500])
 
+    def run(self):
+        try:
+            if not self.api_key:
+                self.failed.emit("未配置文本分析 API Key，请在「⚙ AI 服务 → 视频分析」中配置")
+                return
+            prompts = [
+                ("characters", _ASSET_CHAR_PROMPT_ZH.replace("{剧本}", self.text)),
+                ("scenes", _ASSET_SCENE_PROMPT_ZH.replace("{剧本}", self.text)),
+                ("props", _ASSET_PROP_PROMPT_ZH.replace("{剧本}", self.text)),
+            ]
+            out = {"characters": [], "scenes": [], "props": []}
+            labels = {"characters": "人物", "scenes": "场景", "props": "道具"}
+            for key, prompt in prompts:
+                self.progress.emit("AI 提取%s中…" % labels[key])
+                raw = call_glm(self.api_key, prompt, [],
+                               base_url=self.base_url, model=self.model,
+                               timeout=300, max_tokens=8192)
+                arr = self._extract_json_array(raw)
+                out[key] = [it for it in arr if isinstance(it, dict)]
+            self.progress.emit("AI 提取完成")
+            self.done.emit(out)
+        except Exception as e:
+            self.failed.emit(str(e))
+
 
 def _repair_json_object(ob):
     """把 { ... } 块修复成合法 JSON 对象字符串。
@@ -1832,30 +1862,6 @@ def _repair_json_object(ob):
     out.append(",".join(pairs))
     out.append('}')
     return "".join(out)
-
-    def run(self):
-        try:
-            if not self.api_key:
-                self.failed.emit("未配置文本分析 API Key，请在「⚙ AI 服务 → 视频分析」中配置")
-                return
-            prompts = [
-                ("characters", _ASSET_CHAR_PROMPT_ZH.replace("{剧本}", self.text)),
-                ("scenes", _ASSET_SCENE_PROMPT_ZH.replace("{剧本}", self.text)),
-                ("props", _ASSET_PROP_PROMPT_ZH.replace("{剧本}", self.text)),
-            ]
-            out = {"characters": [], "scenes": [], "props": []}
-            labels = {"characters": "人物", "scenes": "场景", "props": "道具"}
-            for key, prompt in prompts:
-                self.progress.emit("AI 提取%s中…" % labels[key])
-                raw = call_glm(self.api_key, prompt, [],
-                               base_url=self.base_url, model=self.model,
-                               timeout=300, max_tokens=8192)
-                arr = self._extract_json_array(raw)
-                out[key] = [it for it in arr if isinstance(it, dict)]
-            self.progress.emit("AI 提取完成")
-            self.done.emit(out)
-        except Exception as e:
-            self.failed.emit(str(e))
 
 
 class AssetImageRunnable(QRunnable):
@@ -2379,6 +2385,24 @@ class MainWindow(QMainWindow):
         self.sniff_layout = QVBoxLayout(self.sniff_page)
         self.sniff_layout.setContentsMargins(0, 0, 0, 0)
         self.ws_layout.addWidget(self.nav_tabs)
+        # ---- 底部全局状态栏：左侧面包屑（项目 › 页名 › 分集）｜中间操作/进度｜右侧日志计数 ----
+        sb = QHBoxLayout()
+        sb.setContentsMargins(12, 4, 12, 4)
+        sb.setSpacing(10)
+        self.breadcrumb = QLabel("首页")
+        self.breadcrumb.setObjectName("breadcrumb")
+        sb.addWidget(self.breadcrumb)
+        sb.addStretch(1)
+        self.sb_action = QLabel("就绪")
+        self.sb_action.setObjectName("breadcrumb")
+        self.sb_action.setStyleSheet(self.breadcrumb.styleSheet() + "; color:#2563eb;")
+        sb.addWidget(self.sb_action)
+        self.sb_log_count = QLabel("日志: 0 条")
+        self.sb_log_count.setObjectName("sbLogCount")
+        sb.addWidget(self.sb_log_count)
+        sbw = QWidget()
+        sbw.setLayout(sb)
+        self.ws_layout.addWidget(sbw)
 
         # ---- ① 首页：项目卡片 + 新建项目 ----
         self.home_page = QWidget()
@@ -2444,6 +2468,8 @@ class MainWindow(QMainWindow):
         clp.setToolTip("把剪贴板里的分享链接填入输入框（覆盖当前内容）")
         clp.clicked.connect(lambda: self._paste_from_clipboard(force=True))
         ctl.addWidget(clp)
+        _v1 = QFrame(); _v1.setObjectName("vsep"); _v1.setFrameShape(QFrame.VLine)
+        ctl.addWidget(_v1)
         self.capture_btn = QPushButton("📦 抓包")
         self.capture_btn.setObjectName("ghostBtn")
         self.capture_btn.setToolTip(
@@ -2460,6 +2486,8 @@ class MainWindow(QMainWindow):
         self.open_btn.setObjectName("accentBtn")
         self.open_btn.clicked.connect(self._open_url)
         ctl.addWidget(self.open_btn)
+        _v2 = QFrame(); _v2.setObjectName("vsep"); _v2.setFrameShape(QFrame.VLine)
+        ctl.addWidget(_v2)
         self.count_lbl = QLabel("识别链接: 0 个")
         self.count_lbl.setStyleSheet("color:#2563eb; font-weight:700;")
         ctl.addWidget(self.count_lbl)
@@ -2754,6 +2782,8 @@ class MainWindow(QMainWindow):
         self.sub_batch.setToolTip("按分享链接剧集依次识别，结果按集累积显示")
         self.sub_batch.clicked.connect(self._batch_ocr)
         sbar.addWidget(self.sub_batch)
+        _sbar_sep = QFrame(); _sbar_sep.setObjectName("vsep"); _sbar_sep.setFrameShape(QFrame.VLine)
+        sbar.addWidget(_sbar_sep)
         self.sub_copy = QPushButton("📋 复制")
         self.sub_copy.setObjectName("ghostBtn")
         self.sub_copy.clicked.connect(self._sub_copy)
@@ -2789,13 +2819,15 @@ class MainWindow(QMainWindow):
         self.va_batch.setToolTip("开始分析全部已载入剧集（逐集分析，结果按集累加）；分析中点击可停止")
         self.va_batch.clicked.connect(self._va_batch)
         var.addWidget(self.va_batch)
+        _vasep1 = QFrame(); _vasep1.setObjectName("vsep"); _vasep1.setFrameShape(QFrame.VLine)
+        var.addWidget(_vasep1)
         self.va_local = QPushButton("📁 分析本地视频")
         self.va_local.setObjectName("ghostBtn")
         self.va_local.setToolTip("选择一个或多个本地视频文件批量分析（可多选）")
         self.va_local.clicked.connect(self._va_analyze_local_pick)
         var.addWidget(self.va_local)
         self.va_script = QPushButton("📜 一键转剧本")
-        self.va_script.setObjectName("ghostBtn")
+        self.va_script.setObjectName("accentBtn")
         self.va_script.setToolTip("把当前的分析结果（可含多集）反推生成标准剧本")
         self.va_script.clicked.connect(self._va_to_script)
         var.addWidget(self.va_script)
@@ -2809,6 +2841,8 @@ class MainWindow(QMainWindow):
         self.va_set.setToolTip("视频分析：模式 / 模型(GLM-5.3·Flash) / 抽帧数 / API Key")
         self.va_set.clicked.connect(self._open_va_menu)
         var.addWidget(self.va_set)
+        _vasep2 = QFrame(); _vasep2.setObjectName("vsep"); _vasep2.setFrameShape(QFrame.VLine)
+        var.addWidget(_vasep2)
         self.va_copy = QPushButton("📋 复制")
         self.va_copy.setObjectName("ghostBtn")
         self.va_copy.clicked.connect(self._va_copy)
@@ -2905,6 +2939,8 @@ class MainWindow(QMainWindow):
         self.nav_tabs.addTab(self._gen_episode_stk, "🎬 视频生成")
         self.nav_tabs.currentChanged.connect(self._on_nav_tab_changed)
         self.nav_tabs.setCurrentIndex(0)
+        # 状态栏面包屑 + 日志计数初始化（切页时 _on_nav_tab_changed 负责刷新）
+        self._update_breadcrumb()
         self._stack.addWidget(self.workspace_page)
         self._stack.setCurrentWidget(self.home_page)  # 默认进入项目首页
 
@@ -3239,6 +3275,7 @@ class MainWindow(QMainWindow):
     def _on_nav_tab_changed(self, idx):
         """切页时联动顶部返回按钮的文案与行为（依据是否处于某集生成区）。"""
         self._refresh_top_back_btn()
+        self._update_breadcrumb()
         # 视频生成页正停留在某分集时，切入「资产管理」页自动跳到同一分集的资产页，
         # 让两处“当前分集”保持联动（例：第10集视频生成页 → 点资产管理 → 资产的“资产·第10集”）
         try:
@@ -3878,20 +3915,24 @@ class MainWindow(QMainWindow):
         self.asset_gen_btn.setObjectName("accentBtn")
         self.asset_gen_btn.clicked.connect(self._asset_gen_all)
         h.addWidget(self.asset_gen_btn)
-        self.asset_refresh_btn = QPushButton("🔄 刷新")
-        self.asset_refresh_btn.setObjectName("ghostBtn")
-        self.asset_refresh_btn.clicked.connect(self._asset_refresh_tree)
-        h.addWidget(self.asset_refresh_btn)
-        self.asset_scanlocal_btn = QPushButton("📂 绑定本地图片")
-        self.asset_scanlocal_btn.setObjectName("ghostBtn")
-        self.asset_scanlocal_btn.setToolTip("把「资产仓库/images」中已下载的图片绑定到资产："
-                                            "先按文件名自动匹配（asset_资产名_…），剩余图片弹出窗口手动对应到资产卡片")
-        self.asset_scanlocal_btn.clicked.connect(lambda: self._asset_scan_local_images(silent=False))
-        h.addWidget(self.asset_scanlocal_btn)
-        self.asset_ai_btn = QPushButton("⚙ AI 服务")
-        self.asset_ai_btn.setObjectName("ghostBtn")
-        self.asset_ai_btn.clicked.connect(lambda: self._ai_services_settings(2))
-        h.addWidget(self.asset_ai_btn)
+        _vsep_asset = QFrame(); _vsep_asset.setObjectName("vsep"); _vsep_asset.setFrameShape(QFrame.VLine)
+        h.addWidget(_vsep_asset)
+        self.asset_more_btn = QToolButton()
+        self.asset_more_btn.setObjectName("ghostBtn")
+        self.asset_more_btn.setText("⋯ 更多")
+        self.asset_more_btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.asset_more_btn.setToolTip("刷新 / 绑定本地图片 / AI 服务")
+        self.asset_more_menu = QMenu(self.asset_more_btn)
+        _mr1 = self.asset_more_menu.addAction("🔄 刷新资产列表")
+        _mr1.triggered.connect(self._asset_refresh_tree)
+        _mr2 = self.asset_more_menu.addAction("📂 绑定本地图片")
+        _mr2.triggered.connect(lambda: self._asset_scan_local_images(silent=False))
+        _mr2.setToolTip("把「资产仓库/images」中已下载的图片绑定到资产：先按文件名自动匹配，剩余图片弹窗手动对应")
+        _mr3 = self.asset_more_menu.addAction("⚙ AI 服务")
+        _mr3.triggered.connect(lambda: self._ai_services_settings(2))
+        self.asset_more_btn.setMenu(self.asset_more_menu)
+        self.asset_more_btn.setPopupMode(QToolButton.InstantPopup)
+        h.addWidget(self.asset_more_btn)
         _hwrap = QWidget(); _hwrap.setLayout(h)
         layout.addWidget(_hwrap)
 
@@ -3940,7 +3981,13 @@ class MainWindow(QMainWindow):
         self.asset_paste_edit.setMinimumHeight(120)
         self.asset_paste_edit.setStyleSheet("background:#fbfdff; border:1px solid #d1d9e6; border-radius:8px; padding:6px; font-size:12px; color:#1e293b;")
         self.asset_paste_edit.setAcceptRichText(False)
-        paste_h.addWidget(self.asset_paste_edit, 1)
+        paste_h.addWidget(self.asset_paste_edit, 2)
+        # 右侧信息框：提取动态（准备中/各阶段/完成/失败原因）+ 资产卡片描述（占粘贴框匀出的 1/3 宽度）
+        self.asset_info_edit = QTextEdit()
+        self.asset_info_edit.setPlaceholderText("提取动态与资产描述将显示在这里")
+        self.asset_info_edit.setReadOnly(True)
+        self.asset_info_edit.setStyleSheet("background:#f8fafc; border:1px solid #d1d9e6; border-radius:8px; padding:6px; font-size:12px; color:#475569;")
+        paste_h.addWidget(self.asset_info_edit, 1)
         right = QVBoxLayout()
         right.setSpacing(8)
         self.asset_paste_extract_btn = QPushButton("⚡ 一键提取资产")
@@ -3962,10 +4009,6 @@ class MainWindow(QMainWindow):
         self.asset_gen_single_btn.setObjectName("accentBtn")
         self.asset_gen_single_btn.clicked.connect(self._asset_gen_single)
         self.asset_gen_single_btn.setVisible(False)
-
-        self.asset_status = QLabel("")
-        self.asset_status.setObjectName("cap")
-        layout.addWidget(self.asset_status)
 
         # 将单集内容页加入两级结构
         self._asset_stk.addWidget(content)
@@ -4094,19 +4137,20 @@ class MainWindow(QMainWindow):
                               "image": None,
                               "description": str(p.get("description") or "")})
             self._asset_merge_extracted(items)
-            self._asset_status("AI 提取完成：人物%d / 场景%d / 道具%d（已与现有资产去重复用）"
-                               % (len(chars), len(scenes), len(props)))
+            summary = ("AI 提取完成：人物%d / 场景%d / 道具%d（已与现有资产去重复用）"
+                       % (len(chars), len(scenes), len(props)))
+            self._asset_info(summary, "ok")
             self._log("AI 资产提取：人物%d / 场景%d / 道具%d"
                       % (len(chars), len(scenes), len(props)), "ok")
         except Exception as e:
-            self._asset_status("AI 提取处理结果出错: %s" % e)
+            self._asset_info("AI 提取处理结果出错: %s" % e, "error")
             self._log("AI 资产提取出错: %s" % e, "error")
 
     def _asset_ai_failed(self, err):
         self.asset_extract_btn.setEnabled(True)
         self.asset_script_btn.setEnabled(True)
         self.asset_paste_extract_btn.setEnabled(True)
-        self._asset_status("AI 提取失败")
+        self._asset_info("AI 提取失败：%s" % err, "error")
         self._log("AI 资产提取失败: %s" % err, "error")
         QMessageBox.warning(self, "AI 提取失败", "提取失败：%s" % err)
 
@@ -4457,7 +4501,15 @@ class MainWindow(QMainWindow):
                 info += "<br/><font size=2 color='#475569'>%s</font>" % desc[:120]
             info += "<br/><br/>未生成图片"
             self.asset_preview_label.setText(info)
-        self.asset_status.setText("「%s」· %s · 提示词: %s" % (data["name"], data["type"], data.get("prompt","")))
+        desc = data.get("description") or ""
+        role = data.get("role") or ""
+        info_txt = "「%s」· %s" % (data["name"], data["type"])
+        if role:
+            info_txt += "（%s）" % ("主要角色" if role == "main" else "次要角色" if role == "supporting" else "龙套角色")
+        if desc:
+            info_txt += "\n" + desc
+        info_txt += "\n提示词：%s" % (data.get("prompt", "") or "")
+        self._asset_info(info_txt, "desc")
 
     def _asset_grid_menu(self, pos, tkey):
         lst = self._asset_lists.get(tkey)
@@ -4531,7 +4583,7 @@ class MainWindow(QMainWindow):
             if self._asset_selected is data:
                 self._asset_selected = None
             self.asset_preview_label.setText("点击资产卡片查看大图与提示词")
-            self.asset_status.setText("")
+            self._asset_info("")
             self._asset_save()
             # 同步生成区：被删资产的参考图/高亮立即移除
             try:
@@ -5183,7 +5235,17 @@ class MainWindow(QMainWindow):
             self._asset_img_threadpool = None
 
     def _asset_status(self, msg):
-        self.asset_status.setText(msg)
+        self._asset_info(msg)
+
+    def _asset_info(self, msg, kind="info"):
+        """写入资产信息框。kind: info(蓝)/ok(绿)/error(红)/desc(深灰)"""
+        if not hasattr(self, "asset_info_edit"):
+            return
+        colors = {"info": "#2563eb", "ok": "#16a34a", "error": "#dc2626", "desc": "#475569"}
+        color = colors.get(kind, "#475569")
+        self.asset_info_edit.setHtml(
+            '<div style="color:%s; font-size:12px;">%s</div>'
+            % (color, html.escape(str(msg)).replace("\n", "<br>")))
 
     # =====================================================================
     # 视频生成页（Agnes Video 2.5 Flash）
@@ -5492,7 +5554,7 @@ class MainWindow(QMainWindow):
 
         tblay.addWidget(self.gen_task_list, 1)
 
-        # 生成日志小窗（与嗅探页日志同源输出，高度可拖拽）
+        # 生成日志小窗（合并 dock：Tab 页签「生成日志 / 全部日志」，与嗅探页主日志同源收口）
         gen_log_box = QGroupBox("日志")
         gen_log_box.setStyleSheet(
             "QGroupBox{ color:#e2e8f0; font-weight:800; border:1px solid #1e293b; border-radius:6px;"
@@ -5500,11 +5562,21 @@ class MainWindow(QMainWindow):
         glb = QVBoxLayout(gen_log_box)
         glb.setContentsMargins(4, 4, 4, 4)
         glb.setSpacing(0)
+        self.gen_log_tabs = QTabWidget()
+        self.gen_log_tabs.setObjectName("genLogTabs")
         self.gen_log_view = QPlainTextEdit()
         self.gen_log_view.setObjectName("logView")
         self.gen_log_view.setReadOnly(True)
         self.gen_log_view.setMinimumHeight(60)
-        glb.addWidget(self.gen_log_view)
+        self.gen_log_tabs.addTab(self.gen_log_view, "⚙ 生成日志")
+        self.gen_log_all_tab = QPlainTextEdit()
+        self.gen_log_all_tab.setObjectName("logView")
+        self.gen_log_all_tab.setReadOnly(True)
+        self.gen_log_all_tab.setMinimumHeight(60)
+        self.gen_log_all_tab.setPlaceholderText("全部日志（与嗅探页日志同源）")
+        self.gen_log_tabs.addTab(self.gen_log_all_tab, "📜 全部日志")
+        self.gen_log_tabs.setTabPosition(QTabWidget.South)
+        glb.addWidget(self.gen_log_tabs)
 
         self._gen_side_split.addWidget(task_box)
         self._gen_side_split.addWidget(gen_log_box)
@@ -10134,6 +10206,40 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    def _update_breadcrumb(self):
+        """刷新底部状态栏面包屑：项目 › 页名（› 分集）+ 当前操作区提示。"""
+        if not hasattr(self, "breadcrumb"):
+            return
+        proj = self.proj_title.text() if hasattr(self, "proj_title") else "未打开项目"
+        if proj in ("未打开项目", ""):
+            proj = "首页"
+        try:
+            w = self.nav_tabs.currentWidget()
+        except Exception:
+            w = None
+        page = "视频嗅探"
+        ep = ""
+        if w is self.asset_page:
+            page = "资产管理"
+            ep = getattr(self, "_cur_asset_episode", "") or ""
+        elif w is getattr(self, "_gen_episode_stk", None):
+            page = "视频生成"
+            ep = getattr(self, "_current_gen_episode", "") or ""
+        parts = [proj, page]
+        if ep:
+            parts.append(ep)
+        self.breadcrumb.setText("  ›  ".join(parts))
+
+    def _update_log_count(self):
+        """刷新底部状态栏右侧的日志条数（与嗅探主日志同源）。"""
+        if not hasattr(self, "sb_log_count"):
+            return
+        try:
+            n = self.log_view.blockCount()
+            self.sb_log_count.setText("日志: %d 条" % n)
+        except Exception:
+            pass
+
     def _log(self, msg, level="info"):
         colors = {"info": "#38bdf8", "ok": "#4ade80", "warn": "#facc15",
                   "error": "#f87171", "debug": "#94a3b8"}
@@ -10143,12 +10249,27 @@ class MainWindow(QMainWindow):
         self.log_view.appendHtml(html)
         sb = self.log_view.verticalScrollBar()
         sb.setValue(sb.maximum())
-        # 同步到生成页日志小窗（若已创建）
-        gv = getattr(self, "gen_log_view", None)
-        if gv is not None:
-            gv.appendHtml(html)
-            s2 = gv.verticalScrollBar()
+        # 全部日志页签：镜像全量（与嗅探主日志同源）
+        ga = getattr(self, "gen_log_all_tab", None)
+        if ga is not None:
+            ga.appendHtml(html)
+            s2 = ga.verticalScrollBar()
             s2.setValue(s2.maximum())
+        # 生成日志页签：仅当用户停在生成页时跟随写入，避免其他页签切换打断阅读
+        gt = getattr(self, "gen_log_tabs", None)
+        gv = getattr(self, "gen_log_view", None)
+        if gt is not None and gv is not None and gt.currentIndex() == 0:
+            gv.appendHtml(html)
+            s3 = gv.verticalScrollBar()
+            s3.setValue(s3.maximum())
+        # 底部状态栏：日志计数 + 最近一条日志摘要（带级别标记）
+        mark = {"info": "", "ok": "✓ ", "warn": "⚠ ", "error": "✗ ", "debug": ""}.get(level, "")
+        try:
+            self._update_log_count()
+            if hasattr(self, "sb_action"):
+                self.sb_action.setText((mark + str(msg))[:40])
+        except Exception:
+            pass
 
     def _on_all_done(self, ok, fail):
         self.download_btn.setEnabled(True)
