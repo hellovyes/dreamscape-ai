@@ -4357,7 +4357,7 @@ class MainWindow(QMainWindow):
         v.setSpacing(6)
 
         # ── 顶部提示 ──
-        tip = QLabel("🎨 图片生成 · 文字生图 / 参考图编辑 / 批量生成 · 模型设置复用「AI 服务」配置")
+        tip = QLabel("🎨 图片生成 · 无参考图默认文字生图，上传参考图后自动切换为参考图编辑 · 模型设置复用「AI 服务」")
         tip.setStyleSheet("font-size:11px; color:%s; font-weight:600;" % _ctok("text_muted"))
         v.addWidget(tip)
 
@@ -4383,7 +4383,8 @@ class MainWindow(QMainWindow):
             slot = QToolButton()
             slot.setObjectName("imgRefSlot")
             slot.setFixedSize(44, 44)
-            slot.setToolTip("参考图 %d（点击上传/删除）" % (i + 1))
+            slot.setText("＋")
+            slot.setToolTip("参考图 %d（可选，点击上传；全部留空即默认文字生图）" % (i + 1))
             slot.setCursor(Qt.PointingHandCursor)
             slot.clicked.connect(lambda checked=False, _i=i: self._img_ref_pick(_i))
             ref_row.addWidget(slot)
@@ -4533,8 +4534,8 @@ class MainWindow(QMainWindow):
     def _img_ref_clear(self, idx):
         slot = self._img_ref_slots[idx]
         slot._img_ref_key = None
-        slot.setText("🖼")
-        slot.setToolTip("参考图 %d（点击上传）" % (idx + 1))
+        slot.setText("＋")
+        slot.setToolTip("参考图 %d（可选，点击上传；全部留空即默认文字生图）" % (idx + 1))
         slot.setStyleSheet("")
         self._img_status_set("参考图 %d 已清除" % (idx + 1), "ok")
 
@@ -4544,39 +4545,39 @@ class MainWindow(QMainWindow):
         self._img_status_lbl.setStyleSheet("font-size:11px; font-weight:600; color:%s;" % color)
 
     def _img_generate(self):
-        """触发图片生成（Muse-Image 文字生图 + 参考图编辑）。"""
+        """二合一图片生成：无参考图→文生图(/generations)，有参考图→参考图编辑(/edits)。
+        复用现有 AI 服务配置（config.IMAGE_GEN），Muse-Image 风格。"""
         prompt = self._img_prompt_edit.toPlainText().strip()
         if not prompt:
             self._img_status_set("请输入提示词", "err")
             return
         n = self._img_count_spin.value()
         aspect = self._img_aspect_cb.currentText()
-        quality = self._img_quality_cb.currentText()
+        quality_cn = self._img_quality_cb.currentText()
 
-        # 组装参考图
-        ref_urls = []
+        # 组装参考图（本地路径列表，1-4 张）
+        ref_paths = []
         for slot in self._img_ref_slots:
-            url = getattr(slot, "_img_ref_key", None)
-            if url:
-                ref_urls.append(url)
+            p = getattr(slot, "_img_ref_key", None)
+            if p and os.path.isfile(p):
+                ref_paths.append(p)
+        is_edit = bool(ref_paths)
 
         self._img_task_running = True
         self._img_task_id = str(uuid.uuid4())
         self._img_gen_btn.setVisible(False)
         self._img_cancel_btn.setVisible(True)
-        self._img_status_set("正在生成 %d 张图片（%s · %s）…" % (n, aspect, quality), "run")
+        mode_txt = "参考图编辑" if is_edit else "文字生图"
+        self._img_status_set("正在%s %d 张（%s · %s · %d 张参考）…" % (mode_txt, n, aspect, quality_cn, len(ref_paths)), "run")
 
-        # 后台线程调用 create_image_task
-        from gen_area import create_image_task
+        from gen_area import create_image_task, create_image_edit_task
 
-        # 解析画幅为 size（宽x高）
+        # 画幅→size（宽x高）
         aspect_sizes = {"9:16": "768x1344", "16:9": "1344x768", "1:1": "1024x1024", "4:3": "1024x768", "3:4": "768x1024"}
         size = aspect_sizes.get(aspect, "1024x1024")
-
-        # 组装提示词（支持参考图编辑）
-        full_prompt = prompt
-        if ref_urls:
-            full_prompt += " [参考图编辑模式]"
+        # 质量→low/medium/high（Muse-Image qualityValue 语义）
+        quality_map = {"低": "low", "中": "medium", "高": "high"}
+        quality = quality_map.get(quality_cn, "medium")
 
         cfg = config.IMAGE_GEN
         api_key = cfg.get("api_key", "")
@@ -4585,16 +4586,16 @@ class MainWindow(QMainWindow):
         out_dir = os.path.join(os.path.expanduser("~"), "幻镜AI", "img_gen")
         os.makedirs(out_dir, exist_ok=True)
 
-        # 结果文件
         ts = str(int(time.time() * 1000))
-        name_hint = "gen_%s" % ts
-        result_file = os.path.join(out_dir, "gen_result_%s.json" % ts)
+        name_hint = ("edit" if is_edit else "gen") + "_" + ts
+        result_file = os.path.join(out_dir, "img_result_%s.json" % ts)
 
         class _ImgGenThread(QThread):
             done_sig = Signal(object)
             fail_sig = Signal(str)
 
-            def __init__(self, prompt, size, model, api_key, base_url, out_dir, name_hint, result_file, n):
+            def __init__(self, prompt, size, model, api_key, base_url, out_dir,
+                         name_hint, result_file, n, quality, ref_paths):
                 super().__init__()
                 self._prompt = prompt
                 self._size = size
@@ -4605,30 +4606,39 @@ class MainWindow(QMainWindow):
                 self._name_hint = name_hint
                 self._result_file = result_file
                 self._n = n
+                self._quality = quality
+                self._refs = ref_paths
 
             def run(self):
                 try:
                     results = []
                     for i in range(self._n):
-                        r = create_image_task(
-                            prompt=self._prompt,
-                            api_key=self._api_key,
-                            base_url=self._base_url,
-                            model=self._model,
-                            size=self._size,
-                            out_dir=self._out_dir,
-                            name_hint="%s_%d" % (self._name_hint, i),
-                        )
+                        hint = "%s_%d" % (self._name_hint, i)
+                        if self._refs:
+                            r = create_image_edit_task(
+                                prompt=self._prompt, api_key=self._api_key,
+                                base_url=self._base_url, model=self._model,
+                                size=self._size, out_dir=self._out_dir,
+                                name_hint=hint, quality=self._quality,
+                                ref_paths=self._refs,
+                            )
+                        else:
+                            r = create_image_task(
+                                prompt=self._prompt, api_key=self._api_key,
+                                base_url=self._base_url, model=self._model,
+                                size=self._size, out_dir=self._out_dir,
+                                name_hint=hint, quality=self._quality,
+                            )
                         results.append(r)
-                    # 保存结果索引
-                    import json
                     with open(self._result_file, "w", encoding="utf-8") as f:
                         json.dump(results, f, ensure_ascii=False, indent=2)
                     self.done_sig.emit(results)
                 except Exception as e:
                     self.fail_sig.emit(str(e))
 
-        self._img_thread = _ImgGenThread(full_prompt, size, model, api_key, base_url, out_dir, name_hint, result_file, n)
+        self._img_thread = _ImgGenThread(
+            prompt, size, model, api_key, base_url, out_dir,
+            name_hint, result_file, n, quality, ref_paths)
         self._img_thread.done_sig.connect(self._img_on_done)
         self._img_thread.fail_sig.connect(self._img_on_fail)
         self._img_thread.start()

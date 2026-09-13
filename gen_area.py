@@ -58,12 +58,13 @@ def _rmtree_merge_dir(d):
 
 
 def create_image_task(api_key, base_url, prompt, model=None, size="1024x1024",
-                      out_dir=None, parent=None, name_hint=None):
+                      out_dir=None, parent=None, name_hint=None, quality=""):
     """OpenAI 兼容 /images/generations 生图并保存到本地。
 
     返回 {"success": bool, "image_path": str|None, "error": str|None}
     name_hint：可选的资产名，保存文件名会带上便于日后按名找回
     （形如：asset_陆知归_<毫秒时间戳>.png）。
+    quality：可选画质（如 "low"/"medium"/"high"），服务商支持时写入请求体。
     """
     import base64
     import time as _t
@@ -72,7 +73,11 @@ def create_image_task(api_key, base_url, prompt, model=None, size="1024x1024",
     url = (base_url or "").strip() or config.IMAGE_GEN_DEFAULT_BASE
     mdl = (model or "").strip() or config.IMAGE_GEN.get("model", "cogview-3-flash")
     sz = (size or "").strip() or "1024x1024"
-    body = json.dumps({"model": mdl, "prompt": prompt, "size": sz, "n": 1}).encode("utf-8")
+    qm = (quality or "").strip()
+    payload = {"model": mdl, "prompt": prompt, "size": sz, "n": 1}
+    if qm:
+        payload["quality"] = qm
+    body = json.dumps(payload).encode("utf-8")
 
     def _err_detail(ebody, code):
         try:
@@ -160,6 +165,156 @@ def create_image_task(api_key, base_url, prompt, model=None, size="1024x1024",
         safe = safe.strip("._")[:40]
     name = ("asset_%s_%d%s" % (safe, int(time.time() * 1000), ext)
             if safe else "asset_%d%s" % (int(time.time() * 1000), ext))
+    path = os.path.join(out, name)
+    with open(path, "wb") as f:
+        f.write(img_data)
+    return {"success": True, "image_path": path, "error": None}
+
+
+def create_image_edit_task(api_key, base_url, prompt, ref_paths, model=None,
+                           size="1024x1024", out_dir=None, name_hint=None, quality=""):
+    """OpenAI 兼容 /images/edits 参考图编辑（Muse-Image 风格）并保存到本地。
+
+    有参考图时走此端点：multipart/form-data，参考图以 image 字段多次 append；
+    字段含 model/prompt/size/quality/n/output_format，响应解析与 429/5xx 退避重试
+    与文生图一致。返回 {"success": bool, "image_path": str|None, "error": str|None}
+    ref_paths：本地参考图路径列表（1-4 张，Muse-Image 支持图1-图4 多参考）。
+    """
+    import base64
+    import uuid as _uuid
+    import time as _t
+    import urllib.request
+    import urllib.error
+    import urllib.parse
+
+    refs = [p for p in (ref_paths or []) if p and os.path.isfile(str(p))]
+    if not refs:
+        return {"success": False, "image_path": None, "error": "参考图编辑至少需要 1 张本地参考图"}
+
+    url = ((base_url or "").strip() or config.IMAGE_GEN_DEFAULT_BASE).rstrip("/")
+    # /images/edits 与 /images/generations 同根：把末段 generations 替换为 edits
+    if url.endswith("/generations"):
+        url = url[: -len("/generations")] + "/edits"
+    elif not url.endswith("/edits"):
+        url = url + "/edits"
+    mdl = (model or "").strip() or config.IMAGE_GEN.get("model", "cogview-3-flash")
+    sz = (size or "").strip() or "1024x1024"
+    qm = (quality or "").strip()
+
+    def _err_detail(ebody, code):
+        try:
+            j = json.loads(ebody or "")
+            em = j.get("error") or j.get("message") or j
+            if isinstance(em, dict):
+                return str(em.get("message") or json.dumps(em, ensure_ascii=False))[:400]
+            return str(em)[:400]
+        except Exception:
+            return (ebody or "")[:400] or "（服务端未返回详情）"
+
+    # 组装 multipart/form-data
+    boundary = "----MuseImageBoundary" + _uuid.uuid4().hex
+    crlf = "--" + boundary + "\r\n"
+    end = "--" + boundary + "--\r\n"
+    parts = []
+
+    def _append_field(name, value):
+        parts.append(
+            (crlf + 'Content-Disposition: form-data; name="%s"\r\n\r\n%s\r\n' % (name, value)).encode("utf-8"))
+
+    if qm:
+        _append_field("quality", qm)
+    _append_field("model", mdl)
+    _append_field("prompt", prompt)
+    _append_field("size", sz)
+    _append_field("n", "1")
+    _append_field("output_format", "png")
+    for i, p in enumerate(refs):
+        fn = os.path.basename(str(p))
+        with open(p, "rb") as fh:
+            data = fh.read()
+        parts.append(
+            (crlf + 'Content-Disposition: form-data; name="image"; filename="%s"\r\n'
+             "Content-Type: image/png\r\n\r\n" % fn).encode("utf-8"))
+        parts.append(data)
+        parts.append(b"\r\n")
+    body = b"".join(parts) + end.encode("utf-8")
+
+    max_tries = 4
+    last_hint = ""
+    data_resp = None
+    for attempt in range(1, max_tries + 1):
+        req = urllib.request.Request(url, data=body, method="POST")
+        req.add_header("Content-Type", "multipart/form-data; boundary=" + boundary)
+        req.add_header("Authorization", "Bearer %s" % (api_key or "").strip())
+        req.add_header("User-Agent", "Mozilla/5.0")
+        try:
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                data_resp = json.loads(resp.read().decode("utf-8"))
+            break
+        except urllib.error.HTTPError as e:
+            try:
+                ebody = e.read().decode("utf-8", "replace")
+            except Exception:
+                ebody = ""
+            detail = _err_detail(ebody, e.code)
+            if e.code in (429, 500, 502, 503, 504) and attempt < max_tries:
+                try:
+                    wait = float(e.headers.get("Retry-After", "0") or 0)
+                except (AttributeError, ValueError, TypeError):
+                    wait = 0
+                if wait <= 0:
+                    wait = min(3 * attempt, 15)
+                _t.sleep(wait)
+                last_hint = "HTTP %s：%s" % (e.code, detail)
+                continue
+            hint = ""
+            if e.code in (401, 403):
+                hint = "（API Key 无效或无权访问该模型）"
+            elif e.code == 404:
+                hint = "（/images/edits 接口不存在或 base_url 未指向支持编辑的网关）"
+            elif e.code in (400, 422):
+                hint = "（参数或参考图格式不被该服务商接受，可尝试减少参考图数量/换 PNG）"
+            return {"success": False, "image_path": None,
+                    "error": "HTTP %s %s%s" % (e.code, detail, hint)}
+        except urllib.error.URLError as e:
+            last_hint = "网络错误：%s" % (e.reason,)
+            if attempt < max_tries:
+                _t.sleep(min(2 * attempt, 8))
+                continue
+            return {"success": False, "image_path": None, "error": last_hint}
+    if data_resp is None:
+        return {"success": False, "image_path": None, "error": last_hint or "请求失败"}
+
+    items = data_resp.get("data") or []
+    if not items:
+        return {"success": False, "image_path": None,
+                "error": "响应缺少 data: %s" % str(data_resp)[:200]}
+    first = items[0]
+    img_data = None
+    try:
+        if first.get("b64_json"):
+            img_data = base64.b64decode(first["b64_json"])
+            ext = ".png"
+        elif first.get("url"):
+            ireq = urllib.request.Request(first["url"], headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(ireq, timeout=180) as r:
+                img_data = r.read()
+            ext = os.path.splitext(urllib.parse.urlparse(first["url"]).path)[1] or ".png"
+            if len(ext) > 5:
+                ext = ".png"
+    except Exception as e:
+        return {"success": False, "image_path": None, "error": "下载图片失败：%s" % e}
+    if not img_data:
+        return {"success": False, "image_path": None, "error": "响应无可下载图片"}
+
+    out = out_dir or os.path.join(config._EXE_DIR, "资产仓库", "images")
+    os.makedirs(out, exist_ok=True)
+    safe = ""
+    if name_hint:
+        safe = re.sub(r'[\\/:*?"<>|\s]+', "_", str(name_hint).strip())
+        safe = safe.strip("._")[:40]
+    name = ("edit_%s_%d%s" % (safe, int(time.time() * 1000), ext)
+            if safe else "edit_%d%s" % (int(time.time() * 1000), ext))
     path = os.path.join(out, name)
     with open(path, "wb") as f:
         f.write(img_data)
