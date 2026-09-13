@@ -5567,10 +5567,10 @@ class MainWindow(QMainWindow):
         self.gen_storyboard_edit.mousePressEvent = lambda _e: self._gen_expand_prompt(self.gen_storyboard_edit, "分镜提示词")
         mid_v.addWidget(self.gen_storyboard_edit)
         gl.addLayout(mid_v, 3)
-        # 右列：画幅 + 一键动作（一排两个按钮，省高度）
+        # 右列：画幅 + 三个动作按钮，紧凑布局，整列高度对齐左侧 48px 提示词框（不再超出）
         right_v = QVBoxLayout()
-        right_v.setSpacing(4)
-        right_v.addWidget(QLabel("画幅："))
+        right_v.setContentsMargins(0, 0, 0, 0)
+        right_v.setSpacing(3)
         self._gen_global_aspect = "16:9"
         self.gen_global_aspect = NoWheelComboBox()
         self.gen_global_aspect.addItems(ASPECT_RATIOS)
@@ -5583,29 +5583,29 @@ class MainWindow(QMainWindow):
         self._gen_global_aspect = self.gen_global_aspect.currentText()
         self.gen_global_aspect.currentIndexChanged.connect(self._gen_global_aspect_changed)
         right_v.addWidget(self.gen_global_aspect)
-        # 按钮两列网格：一排两个，缩小高度
-        btn_grid = QGridLayout()
-        btn_grid.setSpacing(6)
+        # 三个按钮：前两个并排一行（各半宽），第三个通栏（整行）——与两行提示词框等宽等高对齐
+        row = QHBoxLayout()
+        row.setSpacing(6)
         self.gen_all_btn = QPushButton("⚡ 一键全部生成")
         self.gen_all_btn.setObjectName("accentBtn")
-        self.gen_all_btn.setMinimumHeight(32)
+        self.gen_all_btn.setFixedHeight(30)
         self.gen_all_btn.setToolTip("按顺序自动为每个已填提示词的生成区逐集生成，完成后自动保存到当前剧集文件夹（生成剧集\\<剧集名>\\）")
         self.gen_all_btn.clicked.connect(self._gen_toggle_batch)
-        btn_grid.addWidget(self.gen_all_btn, 0, 0)
+        row.addWidget(self.gen_all_btn, 1)
         self.gen_split_btn = QPushButton("🎬 一键分镜")
         self.gen_split_btn.setObjectName("accentBtn")
-        self.gen_split_btn.setMinimumHeight(32)
+        self.gen_split_btn.setFixedHeight(30)
         self.gen_split_btn.setToolTip("按「视频嗅探」页分段分析的每个分镜，一键创建独立生成区（自动填入该段提示词与时长）")
         self.gen_split_btn.clicked.connect(self._gen_split_storyboard)
-        btn_grid.addWidget(self.gen_split_btn, 0, 1)
+        row.addWidget(self.gen_split_btn, 1)
+        right_v.addLayout(row)
         self.gen_split_local_btn = QPushButton("📂 本地分镜")
         self.gen_split_local_btn.setObjectName("accentBtn")
-        self.gen_split_local_btn.setMinimumHeight(32)
+        self.gen_split_local_btn.setFixedHeight(30)
         self.gen_split_local_btn.setToolTip("选择一个分镜文件（Shot 01 … 或 视频编号01（总时长：10s）…），"
                                             "按段一键创建生成区：画面风格自动填入全局提示词框，时长自动填入对应生成区")
         self.gen_split_local_btn.clicked.connect(self._gen_split_local)
-        btn_grid.addWidget(self.gen_split_local_btn, 1, 0, 1, 2)
-        right_v.addLayout(btn_grid)
+        right_v.addWidget(self.gen_split_local_btn)
         gl.addLayout(right_v, 2)
         pp.addWidget(gbox)
         # 分镜提示词框：粘贴完成后按回车即触发分段创建生成区
@@ -7690,7 +7690,8 @@ class MainWindow(QMainWindow):
 
     def _gen_expand_prompt(self, target_edit, title):
         """点击提示词框 → 弹出放大编辑框（QDialog），在其中输入/粘贴/编辑，
-        确认后写回紧凑框；不影响紧凑框的占位与布局，节省页面空间。"""
+        确认后写回紧凑框；分镜提示词框点「保持并分段」即按回车逻辑切段创建生成区。
+        不影响紧凑框的占位与布局，节省页面空间。"""
         dlg = QDialog(self)
         dlg.setWindowTitle(title)
         dv = QVBoxLayout(dlg)
@@ -7705,27 +7706,39 @@ class MainWindow(QMainWindow):
         dv.addWidget(ed, 1)
         bb = QHBoxLayout()
         bb.addStretch(1)
-        okbtn = QPushButton("保存并关闭")
+        is_storyboard = target_edit is getattr(self, "gen_storyboard_edit", None)
+        okbtn = QPushButton("保持并分段" if is_storyboard else "保存并关闭")
         okbtn.setObjectName("accentBtn")
-        okbtn.setMinimumHeight(30)
+        okbtn.setFixedHeight(32)
+        okbtn.setMinimumWidth(120)   # 预留按钮宽度，避免文字被截断遮挡
         okbtn.setCursor(Qt.PointingHandCursor)
-        okbtn.clicked.connect(dlg.accept)
+        if is_storyboard:
+            def _save_and_segment():
+                target_edit.setPlainText(ed.toPlainText())
+                dlg.accept()
+                # 复用粘贴框「回车分段」的同一套逻辑：按分镜文本一键切段创建生成区
+                self._gen_storyboard_from_paste()
+            okbtn.clicked.connect(_save_and_segment)
+        else:
+            okbtn.clicked.connect(dlg.accept)
         bb.addWidget(okbtn)
         cancelbtn = QPushButton("关闭（不保存）")
         cancelbtn.setObjectName("ghostBtn")
-        cancelbtn.setMinimumHeight(30)
+        cancelbtn.setFixedHeight(32)
+        cancelbtn.setMinimumWidth(120)   # 预留按钮宽度，避免文字被截断遮挡
         cancelbtn.setCursor(Qt.PointingHandCursor)
         cancelbtn.clicked.connect(dlg.reject)
         bb.addWidget(cancelbtn)
         dv.addLayout(bb)
-        dlg.resize(520, 320)
-        # 弹窗关闭后，若点击了"保存"，把放大框文本写回紧凑框
+        dlg.resize(560, 340)
+        # 弹窗关闭后，若点击了"保存并关闭"，把放大框文本写回紧凑框（分镜框已由按钮回调处理）
         if dlg.exec() == QDialog.Accepted:
-            target_edit.setPlainText(ed.toPlainText())
-            if target_edit is getattr(self, "gen_global_edit", None):
-                self._log("已更新全局提示词", "ok")
-            elif target_edit is getattr(self, "gen_storyboard_edit", None):
-                self._log("已更新分镜提示词粘贴框", "ok")
+            if not is_storyboard:
+                target_edit.setPlainText(ed.toPlainText())
+                if target_edit is getattr(self, "gen_global_edit", None):
+                    self._log("已更新全局提示词", "ok")
+                else:
+                    self._log("已更新分镜提示词粘贴框", "ok")
 
     def _gen_storyboard_from_paste(self):
         """从粘贴框读取分镜文本，复用本地分镜解析逻辑一键创建生成区。"""
