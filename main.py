@@ -150,9 +150,6 @@ THEME_LIGHT = {
     "table_sel": "#dbeafe",
     "table_sel_text": "#1e3a8a",
     "progress_bg": "#e5eaf3",
-    "gen_side_bg": "#0f172a",
-    "gen_side_border": "#1e293b",
-    "gen_side_text": "#cbd5e1",
     "merge_panel_bg": "#eff6ff",
     "merge_panel_border": "#bfdbfe",
     "titlebar_bg": "#ffffff",
@@ -167,6 +164,8 @@ THEME_LIGHT = {
     "gen_side_title": "#1f2937",
     "log_list_bg": "#ffffff",
     "log_list_text": "#475569",
+    "warning_bg": "#7a5b2f",
+    "warning_fg": "#ffffff",
 }
 THEME_DARK = {
     "name": "dark",
@@ -209,7 +208,23 @@ THEME_DARK = {
     "tooltip_bg": "#1e293b",
     "tooltip_text": "#e2e8f0",
     "tooltip_border": "#334155",
+    "warning_bg": "#8a6532",
+    "warning_fg": "#fde68a",
 }
+
+
+CURRENT_THEME = {"dark": False}
+"""模块级主题状态：_apply_theme 切换时同步；_cur_theme() 据此返回对应 dict。"""
+
+
+def _cur_theme():
+    """返回当前生效的主题 dict（供控件构建时取 token，随主题切换刷新）。"""
+    return THEME_DARK if CURRENT_THEME["dark"] else THEME_LIGHT
+
+
+def _ctok(key):
+    """取当前主题的颜色 token。"""
+    return _cur_theme()[key]
 
 
 def build_app_qss(t):
@@ -997,12 +1012,12 @@ class DragTitleBar(QFrame):
         lay = QHBoxLayout(self)
         lay.setContentsMargins(14, 4, 8, 4)
         lab = QLabel(text)
-        lab.setStyleSheet("font-weight:700; color:#1e293b; background:transparent;")
+        lab.setStyleSheet("font-weight:700; color:%s; background:transparent;" % _ctok("text"))
         lay.addWidget(lab)
         lay.addStretch(1)
         self.hint = QLabel("拖拽移动")
         self.hint.setObjectName("cap")
-        self.hint.setStyleSheet("background:transparent; color:#94a3b8; font-size:11px;")
+        self.hint.setStyleSheet("background:transparent; color:%s; font-size:11px;" % _ctok("text_faint"))
         lay.addWidget(self.hint)
         self.min_btn = QPushButton("—")
         self.min_btn.setObjectName("titleBtn")
@@ -1482,7 +1497,7 @@ class ProjectCard(QPushButton):
         top.addWidget(ic)
         self.nm = QLabel(name)
         self.nm.setWordWrap(True)
-        self.nm.setStyleSheet("font-size:15px; font-weight:800; color:#1e293b; background:transparent;")
+        self.nm.setStyleSheet("font-size:15px; font-weight:800; color:%s; background:transparent;" % _ctok("text"))
         top.addWidget(self.nm, 1)
         self.delb = QPushButton("✕")
         self.delb.setFixedSize(22, 22)
@@ -1549,13 +1564,13 @@ class EpGenCard(QFrame):
         top.addWidget(ic)
         self.nm = QLabel(name)
         self.nm.setWordWrap(True)
-        self.nm.setStyleSheet("font-size:15px; font-weight:800; color:#1e293b; background:transparent;")
+        self.nm.setStyleSheet("font-size:15px; font-weight:800; color:%s; background:transparent;" % _ctok("text"))
         top.addWidget(self.nm, 1)
         self.delb = QPushButton("✕")
         self.delb.setFixedSize(22, 22)
         self.delb.setStyleSheet(
-            "QPushButton{border:none; border-radius:11px; color:#94a3b8; font-weight:900; background:transparent;}"
-            "QPushButton:hover{background:#fee2e2; color:#dc2626;}")
+            "QPushButton{border:none; border-radius:11px; color:%s; font-weight:900; background:transparent;}"
+            "QPushButton:hover{background:#fee2e2; color:#dc2626;}" % _ctok("text_faint"))
         self.delb.setCursor(Qt.PointingHandCursor)
         self.delb.setFocusPolicy(Qt.NoFocus)
         self.delb.clicked.connect(lambda: self.deleted.emit(self._name))
@@ -1564,7 +1579,7 @@ class EpGenCard(QFrame):
         v.addStretch(1)
         self.esc = QLabel("%d 个生成区" % episode_count)
         self.esc.setObjectName("cap")
-        self.esc.setStyleSheet("background:transparent; color:#64748b; font-size:12px;")
+        self.esc.setStyleSheet("background:transparent; color:%s; font-size:12px;" % _ctok("text_muted"))
         v.addWidget(self.esc)
         for _c in (ic, self.nm, self.esc):
             _c.setAttribute(Qt.WA_TransparentForMouseEvents, True)
@@ -1790,7 +1805,7 @@ class EpGenCardAdd(QFrame):
         v.addStretch(1)
         ic = QLabel("+")
         ic.setAlignment(Qt.AlignCenter)
-        ic.setStyleSheet("font-size:32px; font-weight:300; color:#94a3b8; background:transparent;")
+        ic.setStyleSheet("font-size:32px; font-weight:300; color:%s; background:transparent;" % _ctok("text_faint"))
         v.addWidget(ic)
         v.addStretch(1)
 
@@ -1821,13 +1836,13 @@ class AssetEpCard(QFrame):
         top.addWidget(ic)
         self.nm = QLabel(name)
         self.nm.setWordWrap(True)
-        self.nm.setStyleSheet("font-size:15px; font-weight:800; color:#1e293b; background:transparent;")
+        self.nm.setStyleSheet("font-size:15px; font-weight:800; color:%s; background:transparent;" % _ctok("text"))
         top.addWidget(self.nm, 1)
         v.addLayout(top)
         v.addStretch(1)
         self.esc = QLabel("查看/提取该分集资产")
         self.esc.setObjectName("cap")
-        self.esc.setStyleSheet("background:transparent; color:#64748b; font-size:12px;")
+        self.esc.setStyleSheet("background:transparent; color:%s; font-size:12px;" % _ctok("text_muted"))
         v.addWidget(self.esc)
 
     def mouseReleaseEvent(self, event):
@@ -2116,6 +2131,7 @@ class MainWindow(QMainWindow):
         self._theme = "light"
         self._settings = QSettings("Trae", "dreamscape-ai")
         self._theme = self._settings.value("theme", "light", type=str) or "light"
+        CURRENT_THEME["dark"] = (self._theme == "dark")
         self._apply_theme(self._theme)
         self._build_ui()
         self._init_window_geometry()     # 窗口尺寸/位置：恢复上次或按屏幕自适应（不全屏）
@@ -2205,7 +2221,7 @@ class MainWindow(QMainWindow):
         self._ext_pending_pick = which
         btn = {"share": self.ext_pick_share, "copy": self.ext_pick_copy}[which]
         btn.setText("⌛3秒后取点(再点取消)")
-        btn.setStyleSheet("background:#7a5b2f; color:#fff;")
+        btn.setStyleSheet("background:%s; color:%s;" % (_ctok("warning_bg"), _ctok("warning_fg")))
         name = {"share": "「分享」", "copy": "「复制链接」"}[which]
         self._log(f"点『{name}取点』后请立刻把鼠标移到对应按钮上，3 秒后自动取坐标。", "info")
         self._ext_pick_timer = QTimer(self)
@@ -2243,7 +2259,7 @@ class MainWindow(QMainWindow):
         self._ext_pending_cap = which
         btn = {"share": self.ext_cap_share, "copy": self.ext_cap_copy}[which]
         btn.setText("⌛3秒后采集(再点取消)")
-        btn.setStyleSheet("background:#7a5b2f; color:#fff;")
+        btn.setStyleSheet("background:%s; color:%s;" % (_ctok("warning_bg"), _ctok("warning_fg")))
         self._log("点『采集』后请立刻把鼠标移到目标按钮上，3 秒后自动截取模板。", "info")
         self._ext_cap_timer = QTimer(self)
         self._ext_cap_timer.setSingleShot(True)
@@ -2272,7 +2288,7 @@ class MainWindow(QMainWindow):
         st = {"share": self.ext_state_share, "copy": self.ext_state_copy}[which] if which in ("share", "copy") else None
         if st:
             st.setText(f"✓ 已采集（中心 {cx},{cy}）")
-            st.setStyleSheet("color:#16a34a;")
+            st.setStyleSheet("color:%s;" % _ctok("success"))
         self._log(f"✓ 已采集『{which}』模板 ({cx},{cy})", "ok")
 
     def _ext_clr(self, which):
@@ -2301,11 +2317,11 @@ class MainWindow(QMainWindow):
         loc = find_button(tmpl, shot, thresh=0.5) if shot is not None else None
         if loc:
             bx, by, sc = loc
-            self.ext_state_share.setStyleSheet("color:#16a34a;")
+            self.ext_state_share.setStyleSheet("color:%s;" % _ctok("success"))
             self.ext_state_share.setText(f"✓ 识别到 ({x+bx},{y+by}) 置信{sc:.2f}")
             click(x + bx, y + by)
         else:
-            self.ext_state_share.setStyleSheet("color:#dc2626;")
+            self.ext_state_share.setStyleSheet("color:%s;" % _ctok("danger"))
             self.ext_state_share.setText("识别失败，请贴近重新采集")
 
     def _open_ext_panel(self):
@@ -2499,21 +2515,21 @@ class MainWindow(QMainWindow):
         self.proj_back_target = "home"
         wsbar.addWidget(self.proj_back)
         self.proj_title = QLabel("未打开项目")
-        self.proj_title.setStyleSheet("font-size:14px; font-weight:700; color:#1e293b;")
+        self.proj_title.setStyleSheet("font-size:14px; font-weight:700; color:%s;" % _cur_theme()["text"])
         # 标题 + 当前分集纯文字（紧跟剧名，如「📁 xxx · 第2集」），整体占 stretch 使右侧按钮靠右
         _proj_grp = QHBoxLayout()
         _proj_grp.setContentsMargins(0, 0, 0, 0)
         _proj_grp.setSpacing(6)
         _proj_grp.addWidget(self.proj_title)
         self.gen_ep_badge_lbl = QLabel("")
-        self.gen_ep_badge_lbl.setStyleSheet("font-size:13px; font-weight:700; color:#1e293b;")
+        self.gen_ep_badge_lbl.setStyleSheet("font-size:13px; font-weight:700; color:%s;" % _cur_theme()["text"])
         self.gen_ep_badge_lbl.setVisible(False)
         _proj_grp.addWidget(self.gen_ep_badge_lbl)
         _proj_grp.addStretch(1)
         wsbar.addLayout(_proj_grp, 1)
         # 全局运行状态灯：绿色=运行中，红色=空闲（跨页面可见，一眼掌握任务状态）
         self.global_status = QLabel("● 空闲")
-        self.global_status.setStyleSheet("color:#ef4444; font-weight:800; font-size:13px;")
+        self.global_status.setStyleSheet("color:%s; font-weight:800; font-size:13px;" % _ctok("danger"))
         self.global_status.setToolTip("当前无任务运行")
         self.global_status.setCursor(Qt.PointingHandCursor)
         self.global_status.mousePressEvent = self._global_status_click
@@ -2557,7 +2573,7 @@ class MainWindow(QMainWindow):
         sb.addStretch(1)
         self.sb_action = QLabel("就绪")
         self.sb_action.setObjectName("breadcrumb")
-        self.sb_action.setStyleSheet(self.breadcrumb.styleSheet() + "; color:#2563eb;")
+        self.sb_action.setStyleSheet(self.breadcrumb.styleSheet() + "; color:%s;" % _ctok("accent"))
         sb.addWidget(self.sb_action)
         self.sb_log_count = QLabel("日志: 0 条")
         self.sb_log_count.setObjectName("sbLogCount")
@@ -2573,7 +2589,7 @@ class MainWindow(QMainWindow):
         hp_root.setSpacing(14)
         hdr = QHBoxLayout()
         htitle = QLabel("🏠 我的项目")
-        htitle.setStyleSheet("font-size:22px; font-weight:900; color:#1e293b;")
+        htitle.setStyleSheet("font-size:22px; font-weight:900; color:%s;" % _ctok("text"))
         hdr.addWidget(htitle)
         hdr.addSpacing(10)
         hcap = QLabel("每个项目独立保存识别剧集、分析结果、生成历史与下载目录")
@@ -2651,7 +2667,7 @@ class MainWindow(QMainWindow):
         _v2 = QFrame(); _v2.setObjectName("vsep"); _v2.setFrameShape(QFrame.VLine)
         ctl.addWidget(_v2)
         self.count_lbl = QLabel("识别链接: 0 个")
-        self.count_lbl.setStyleSheet("color:#2563eb; font-weight:700;")
+        self.count_lbl.setStyleSheet("color:%s; font-weight:700;" % _ctok("accent"))
         ctl.addWidget(self.count_lbl)
         ctl.addWidget(QLabel("每页停留(秒):"))
         self.hold_spin = QSpinBox()
@@ -2659,7 +2675,7 @@ class MainWindow(QMainWindow):
         self.hold_spin.setValue(1)
         ctl.addWidget(self.hold_spin)
         self.status_lbl = QLabel("未开始")
-        self.status_lbl.setStyleSheet("color:#64748b;")
+        self.status_lbl.setStyleSheet("color:%s;" % _ctok("text_muted"))
         ctl.addWidget(self.status_lbl)
         self.stop_browse_btn = QPushButton("⏹ 停止批量浏览")
         self.stop_browse_btn.setObjectName("stopBtn")
@@ -2829,7 +2845,7 @@ class MainWindow(QMainWindow):
         self.ext_stop.clicked.connect(self._ext_stop)
         er.addWidget(self.ext_stop, 1)
         self.ext_status = QLabel("未开始")
-        self.ext_status.setStyleSheet("color:#64748b;")
+        self.ext_status.setStyleSheet("color:%s;" % _ctok("text_muted"))
         er.addWidget(self.ext_status, 2)
         bd.addLayout(er)
         self.ext_window = ex_card
@@ -2937,7 +2953,7 @@ class MainWindow(QMainWindow):
         sb.setContentsMargins(8, 6, 8, 6); sb.setSpacing(4)
         sbar = WrapFlowLayout(hspacing=6, vspacing=6)   # 窄窗口自动换行，不撑宽窗口
         self.sub_status = QLabel("未识别")
-        self.sub_status.setStyleSheet("color:#64748b;")
+        self.sub_status.setStyleSheet("color:%s;" % _ctok("text_muted"))
         sbar.addWidget(self.sub_status)
         self.sub_batch = QPushButton("🎬 批量识别")
         self.sub_batch.setObjectName("ghostBtn")
@@ -2974,7 +2990,7 @@ class MainWindow(QMainWindow):
         vp.setContentsMargins(8, 6, 8, 6); vp.setSpacing(4)
         var = WrapFlowLayout(hspacing=6, vspacing=6)   # 9 个按钮原本一行要 800+px，改成可换行
         self.va_status = QLabel("未分析")
-        self.va_status.setStyleSheet("color:#64748b;")
+        self.va_status.setStyleSheet("color:%s;" % _ctok("text_muted"))
         var.addWidget(self.va_status)
         self.va_batch = QPushButton("▶ 开始分析")
         self.va_batch.setObjectName("startBtn")
@@ -3046,7 +3062,7 @@ class MainWindow(QMainWindow):
         add_local.clicked.connect(self._grid_add_local)
         row_ops.addWidget(add_local)
         hint = QLabel("单击=选中 · 双击=播放 · 右键=识别/分析")
-        hint.setStyleSheet("color:#94a3b8;")
+        hint.setStyleSheet("color:%s;" % _ctok("text_faint"))
         hint.setWordWrap(True)
         row_ops.addWidget(hint)
         _rowops_wrap = QWidget(); _rowops_wrap.setLayout(row_ops)
@@ -3518,14 +3534,14 @@ class MainWindow(QMainWindow):
 
         head = QHBoxLayout()
         t = QLabel("📖 剧本工作台")
-        t.setStyleSheet("font-size:15px; font-weight:800; color:#1e293b;")
+        t.setStyleSheet("font-size:15px; font-weight:800; color:%s;" % _ctok("text"))
         head.addWidget(t)
         cap = QLabel("视频分析结果 / 剧本 统一存放 · 富文本编辑")
         cap.setObjectName("cap")
         head.addWidget(cap)
         head.addStretch(1)
         self.script_status = QLabel("")
-        self.script_status.setStyleSheet("color:#64748b;")
+        self.script_status.setStyleSheet("color:%s;" % _ctok("text_muted"))
         head.addWidget(self.script_status)
         pp.addLayout(head)
 
@@ -3575,7 +3591,7 @@ class MainWindow(QMainWindow):
         ll.setContentsMargins(0, 0, 0, 0)
         ll.setSpacing(4)
         lib_lbl = QLabel("📚 项目文件库")
-        lib_lbl.setStyleSheet("font-weight:700; color:#334155;")
+        lib_lbl.setStyleSheet("font-weight:700; color:%s;" % _ctok("text"))
         ll.addWidget(lib_lbl)
         self.script_list = QListWidget()
         self.script_list.setObjectName("scriptList")
@@ -3939,7 +3955,7 @@ class MainWindow(QMainWindow):
         lay.setSpacing(12)
         hd = QHBoxLayout()
         t = QLabel("🎨 资产管理 · 选择分集")
-        t.setStyleSheet("font-size:15px; font-weight:800; color:#1e293b;")
+        t.setStyleSheet("font-size:15px; font-weight:800; color:%s;" % _ctok("text"))
         hd.addWidget(t)
         cap = QLabel("分集与视频生成剧集共用，资产集间互通：同名资产自动复用")
         cap.setObjectName("cap")
@@ -3958,7 +3974,7 @@ class MainWindow(QMainWindow):
         self._asset_ep_cards = []
         self._asset_ep_empty = QLabel("暂无分集\n请先到「🎬 视频生成」创建剧集，或提取资产")
         self._asset_ep_empty.setAlignment(Qt.AlignCenter)
-        self._asset_ep_empty.setStyleSheet("color:#94a3b8; font-size:14px;")
+        self._asset_ep_empty.setStyleSheet("color:%s; font-size:14px;" % _ctok("text_faint"))
         lay.addWidget(self._asset_ep_empty)
         return p
 
@@ -4060,7 +4076,7 @@ class MainWindow(QMainWindow):
         self._asset_ep_back.clicked.connect(self._asset_ep_back_nav)
         self._asset_ep_header.addWidget(self._asset_ep_back)
         self._asset_ep_title = QLabel("资产 · 第1集")
-        self._asset_ep_title.setStyleSheet("font-size:14px; font-weight:800; color:#1e293b;")
+        self._asset_ep_title.setStyleSheet("font-size:14px; font-weight:800; color:%s;" % _ctok("text"))
         self._asset_ep_header.addWidget(self._asset_ep_title)
         self._asset_ep_header.addStretch(1)
         layout.addLayout(self._asset_ep_header)
@@ -4113,9 +4129,10 @@ class MainWindow(QMainWindow):
         for tkey, ticon in [("人物", "👤"), ("场景", "🏠"), ("道具", "🎒")]:
             box = QGroupBox("%s %s" % (ticon, tkey))
             box.setStyleSheet(
-                "QGroupBox{font-weight:700; color:#1e293b; border:1px solid #e2e8f0; border-radius:8px;"
-                " margin-top:10px; background:#ffffff;}"
-                "QGroupBox::title{subcontrol-origin:margin; left:10px; padding:0 4px;}")
+                "QGroupBox{font-weight:700; color:%s; border:1px solid %s; border-radius:8px;"
+                " margin-top:10px; background:%s;}"
+                "QGroupBox::title{subcontrol-origin:margin; left:10px; padding:0 4px;}"
+                % (_ctok("text"), _ctok("border"), _ctok("surface")))
             bl = QVBoxLayout(box)
             bl.setContentsMargins(4, 4, 4, 4)
             bl.setSpacing(4)
@@ -4129,10 +4146,11 @@ class MainWindow(QMainWindow):
             lst.setProperty("asset_grid_maxcols", 5)
             lst.installEventFilter(self)
             lst.setStyleSheet(
-                "QListWidget{background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px;}"
+                "QListWidget{background:%s; border:1px solid %s; border-radius:6px;}"
                 "QListWidget::item{border:none; padding:2px; background:transparent;}"
-                "QListWidget::item:hover{background:#eef4ff; border-radius:6px;}"
-                "QListWidget::item:selected{background:#dbeafe; border-radius:6px;}")
+                "QListWidget::item:hover{background:%s; border-radius:6px;}"
+                "QListWidget::item:selected{background:%s; border-radius:6px;}"
+                % (_ctok("table_alt"), _ctok("border"), _ctok("tab_unsel_hover"), _ctok("table_sel")))
             lst.itemClicked.connect(lambda it, _t=tkey: self._asset_on_select(it, _t))
             lst.itemDoubleClicked.connect(lambda it, _t=tkey: self._asset_on_select(it, _t))
             lst.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -4149,14 +4167,16 @@ class MainWindow(QMainWindow):
         self.asset_paste_edit = QTextEdit()
         self.asset_paste_edit.setPlaceholderText("📋 在此粘贴剧本/分析文本，一键提取人物/场景/道具资产（与「选择分析结果→一键提取」同一套 AI 提示词）")
         self.asset_paste_edit.setMinimumHeight(120)
-        self.asset_paste_edit.setStyleSheet("background:#fbfdff; border:1px solid #d1d9e6; border-radius:8px; padding:6px; font-size:12px; color:#1e293b;")
+        self.asset_paste_edit.setStyleSheet("background:%s; border:1px solid %s; border-radius:8px; padding:6px; font-size:12px; color:%s;"
+                                              % (_ctok("input_bg"), _ctok("input_border"), _ctok("text")))
         self.asset_paste_edit.setAcceptRichText(False)
         paste_h.addWidget(self.asset_paste_edit, 2)
         # 右侧信息框：提取动态（准备中/各阶段/完成/失败原因）+ 资产卡片描述（占粘贴框匀出的 1/3 宽度）
         self.asset_info_edit = QTextEdit()
         self.asset_info_edit.setPlaceholderText("提取动态与资产描述将显示在这里")
         self.asset_info_edit.setReadOnly(True)
-        self.asset_info_edit.setStyleSheet("background:#f8fafc; border:1px solid #d1d9e6; border-radius:8px; padding:6px; font-size:12px; color:#475569;")
+        self.asset_info_edit.setStyleSheet("background:%s; border:1px solid %s; border-radius:8px; padding:6px; font-size:12px; color:%s;"
+                                            % (_ctok("table_alt"), _ctok("input_border"), _ctok("text_muted")))
         paste_h.addWidget(self.asset_info_edit, 1)
         right = QVBoxLayout()
         right.setSpacing(8)
@@ -4585,13 +4605,14 @@ class MainWindow(QMainWindow):
         plus.setFixedSize(72, 72)
         plus.setAlignment(Qt.AlignCenter)
         plus.setStyleSheet(
-            "font-size:34px; font-weight:700; color:#3b82f6;"
-            "background:#fbfdff; border:1.5px dashed #93c5fd; border-radius:12px;")
+            "font-size:34px; font-weight:700; color:%s;"
+            "background:%s; border:1.5px dashed %s; border-radius:12px;"
+            % (_ctok("accent"), _ctok("input_bg"), _ctok("accent")))
         plus.setToolTip("添加%s资产（本地上传图片，稍后也可 AI 生成）" % tkey)
         lay.addWidget(plus, 0, Qt.AlignCenter)
         nm = QLabel("添加%s" % tkey)
         nm.setAlignment(Qt.AlignCenter)
-        nm.setStyleSheet("font-size:10px; color:#3b82f6; background:transparent;")
+        nm.setStyleSheet("font-size:10px; color:%s; background:transparent;" % _ctok("accent"))
         lay.addWidget(nm, 0, Qt.AlignCenter)
         # 卡片整体可点击（itemClicked），无需为子控件安装事件
         w.setToolTip("添加%s资产：选择本地图片上传；不选图片可先命名，稍后用 AI 生成" % tkey)
@@ -4611,12 +4632,14 @@ class MainWindow(QMainWindow):
             img.setToolTip("点击放大预览")
             img.setCursor(Qt.PointingHandCursor)
             img.setProperty("asset_img_path", p)
-            img.setStyleSheet("border:1px solid #cbd5e1; border-radius:6px; background:#e2e8f0;")
+            img.setStyleSheet("border:1px solid %s; border-radius:6px; background:%s;"
+                              % (_ctok("border_soft"), _ctok("table_alt")))
         else:
             img.setText("无图")
             img.setToolTip("点击「生成此资产图」用 AI 生图")
             img.setProperty("asset_img_path", "")
-            img.setStyleSheet("border:1px dashed #cbd5e1; border-radius:6px; background:#f8fafc; color:#94a3b8; font-size:10px;")
+            img.setStyleSheet("border:1px dashed %s; border-radius:6px; background:%s; color:%s; font-size:10px;"
+                              % (_ctok("border_soft"), _ctok("table_alt"), _ctok("text_faint")))
         img.setProperty("asset_data_name", asset["name"])
         img.setProperty("asset_data_type", asset["type"])
         img.installEventFilter(self)
@@ -4625,8 +4648,8 @@ class MainWindow(QMainWindow):
         nm.setAlignment(Qt.AlignCenter)
         nm.setWordWrap(True)
         nm.setStyleSheet(
-            "font-size:13px; font-weight:600; color:#1e293b; background:transparent;"
-            "line-height:14px;")
+            "font-size:13px; font-weight:600; color:%s; background:transparent;"
+            "line-height:14px;" % _ctok("text"))
         tip = asset["name"]
         role = asset.get("role") or ""
         desc = asset.get("description") or ""
@@ -4963,7 +4986,7 @@ class MainWindow(QMainWindow):
         tip = QLabel("左侧为「资产仓库/images」中已下载但尚未绑定的图片（可点选预览）。\n"
                      "选中一张图片 → 右侧选择目标资产 → 点击「⬅ 绑定到该资产」。")
         tip.setWordWrap(True)
-        tip.setStyleSheet("color:#475569; font-size:12px;")
+        tip.setStyleSheet("color:%s; font-size:12px;" % _ctok("text_muted"))
         lay.addWidget(tip)
 
         mid = QHBoxLayout()
@@ -4974,8 +4997,9 @@ class MainWindow(QMainWindow):
         self._bind_pics.setGridSize(QSize(132, 132))
         self._bind_pics.setResizeMode(QListView.Adjust)
         self._bind_pics.setStyleSheet(
-            "QListWidget{background:#f8fafc; border:1px solid #cbd5e1; border-radius:8px;}"
-            "QListWidget::item{padding:4px;}")
+            "QListWidget{background:%s; border:1px solid %s; border-radius:8px;}"
+            "QListWidget::item{padding:4px;}"
+            % (_ctok("table_alt"), _ctok("border_soft")))
         for p in free_imgs:
             item = QListWidgetItem()
             pm = QPixmap(p)
@@ -5429,7 +5453,7 @@ class MainWindow(QMainWindow):
         head = QWidget()
         hd = WrapFlowLayout(head, margin=0, hspacing=8, vspacing=6)
         self.gen_key_lbl = QLabel("未配置 Key")
-        self.gen_key_lbl.setStyleSheet("color:#64748b;")
+        self.gen_key_lbl.setStyleSheet("color:%s;" % _ctok("text_muted"))
         hd.addWidget(self.gen_key_lbl)
         self.gen_all_btn = QPushButton("⚡ 一键全部生成")
         self.gen_all_btn.setObjectName("accentBtn")
@@ -5516,7 +5540,7 @@ class MainWindow(QMainWindow):
         self._merge_bar.setContentsMargins(8, 0, 8, 0)
         self._merge_bar.setSpacing(6)
         self._merge_label = QLabel("未选生成区")
-        self._merge_label.setStyleSheet("font-size:12px; color:#64748b; font-weight:600;")
+        self._merge_label.setStyleSheet("font-size:12px; color:%s; font-weight:600;" % _ctok("text_muted"))
         self._merge_bar.addWidget(self._merge_label)
         self._merge_bar.addStretch(1)
         # 全选/取消全选按钮
@@ -5544,7 +5568,8 @@ class MainWindow(QMainWindow):
         self._merge_bar.addWidget(self._merge_clear_btn)
         self._merge_panel = QWidget()
         self._merge_panel.setLayout(self._merge_bar)
-        self._merge_panel.setStyleSheet("background:#eff6ff; border-bottom:1px solid #bfdbfe;")
+        self._merge_panel.setStyleSheet("background:%s; border-bottom:1px solid %s;"
+                                         % (_ctok("merge_panel_bg"), _ctok("merge_panel_border")))
         self._merge_panel.setVisible(False)
         self.gen_area_scroll = QScrollArea()
         self.gen_area_scroll.setWidgetResizable(True)
@@ -5585,9 +5610,8 @@ class MainWindow(QMainWindow):
         side.setObjectName("genSide")
         side.setMinimumWidth(180)
         side.setMaximumWidth(420)
-        theme = THEME_DARK if getattr(self, "_theme", "light") == "dark" else THEME_LIGHT
-        side.setStyleSheet("QWidget#genSide{ background:%s; border-left:1px solid %s; }"
-                           % (theme["gen_side_bg"], theme["gen_side_border"]))
+        self._gen_side = side
+        self._gen_side_apply_theme()
         lay = QVBoxLayout(side)
         # 收紧侧栏内边距与分段间距，让播放区/任务区更贴近左边的生成区
         lay.setContentsMargins(3, 6, 3, 6)
@@ -5595,7 +5619,7 @@ class MainWindow(QMainWindow):
 
         # ---- 视频播放区：内嵌播放器已隐藏，点击任务/文件卡片以弹窗播放 ----
         t_play = QLabel("▶ 视频以弹窗播放（点击任务或文件卡片）")
-        theme = THEME_DARK if getattr(self, "_theme", "light") == "dark" else THEME_LIGHT
+        self._gen_play_lbl = t_play
         t_play.setStyleSheet("color:%s; font-weight:800; font-size:11px;" % theme["text_muted"])
         lay.addWidget(t_play)
 
@@ -5670,21 +5694,16 @@ class MainWindow(QMainWindow):
 
         # ---- 视频任务列表 ----
         t1_lay = QHBoxLayout()
-        theme = THEME_DARK if getattr(self, "_theme", "light") == "dark" else THEME_LIGHT
         t1 = QLabel("📌 视频任务")
-        t1.setStyleSheet("color:%s; font-weight:800;" % theme["gen_side_title"])
+        self._gen_task_title = t1
         t1_lay.addWidget(t1)
         t1_lay.addStretch(1)
         self.gen_task_lbl = QLabel("尚无任务")
-        self.gen_task_lbl.setStyleSheet("color:%s; font-size:12px;" % theme["text_muted"])
         t1_lay.addWidget(self.gen_task_lbl)
         lay.addLayout(t1_lay)
         self.gen_task_list = QListWidget()
         self.gen_task_list.setFrameShape(QFrame.NoFrame)
         self.gen_task_list.setMinimumHeight(90)
-        self.gen_task_list.setStyleSheet(
-            "QListWidget{ background:%s; color:%s; border:1px solid %s; border-radius:6px; }"
-            % (theme["log_list_bg"], theme["log_list_text"], theme["gen_side_border"]))
         self.gen_task_list.itemClicked.connect(self._gen_task_open)
 
         # ---- 任务区 + 日志区（上下可拖拽分割，日志高度可自由拉动）----
@@ -5732,10 +5751,7 @@ class MainWindow(QMainWindow):
 
         # 生成日志小窗（合并 dock：Tab 页签「生成日志 / 全部日志」，与嗅探页主日志同源收口）
         gen_log_box = QGroupBox("日志")
-        gen_log_box.setStyleSheet(
-            "QGroupBox{ color:%s; font-weight:800; border:1px solid %s; border-radius:6px;"
-            " margin-top:8px; } QGroupBox::title{ subcontrol-origin:margin; left:6px; padding:0 3px; }"
-            % (theme["gen_side_title"], theme["gen_side_border"]))
+        self._gen_log_box = gen_log_box
         glb = QVBoxLayout(gen_log_box)
         glb.setContentsMargins(4, 4, 4, 4)
         glb.setSpacing(0)
@@ -5764,7 +5780,30 @@ class MainWindow(QMainWindow):
 
         # 浮窗播放器（单例，用于右键菜单等场景）
         self._float_player = None
+        self._gen_side_apply_theme()
         return side
+
+    def _gen_side_apply_theme(self):
+        """按当前主题刷新生成侧栏（播放提示/任务标题/任务列表/日志框）。"""
+        theme = THEME_DARK if getattr(self, "_theme", "light") == "dark" else THEME_LIGHT
+        if getattr(self, "_gen_side", None) is not None:
+            self._gen_side.setStyleSheet("QWidget#genSide{ background:%s; border-left:1px solid %s; }"
+                                          % (theme["gen_side_bg"], theme["gen_side_border"]))
+        if getattr(self, "_gen_play_lbl", None) is not None:
+            self._gen_play_lbl.setStyleSheet("color:%s; font-weight:800; font-size:11px;" % theme["text_muted"])
+        if getattr(self, "_gen_task_title", None) is not None:
+            self._gen_task_title.setStyleSheet("color:%s; font-weight:800;" % theme["gen_side_title"])
+        if getattr(self, "gen_task_lbl", None) is not None:
+            self.gen_task_lbl.setStyleSheet("color:%s; font-size:12px;" % theme["text_muted"])
+        if getattr(self, "gen_task_list", None) is not None:
+            self.gen_task_list.setStyleSheet(
+                "QListWidget{ background:%s; color:%s; border:1px solid %s; border-radius:6px; }"
+                % (theme["log_list_bg"], theme["log_list_text"], theme["gen_side_border"]))
+        if getattr(self, "_gen_log_box", None) is not None:
+            self._gen_log_box.setStyleSheet(
+                "QGroupBox{ color:%s; font-weight:800; border:1px solid %s; border-radius:6px;"
+                " margin-top:8px; } QGroupBox::title{ subcontrol-origin:margin; left:6px; padding:0 3px; }"
+                % (theme["gen_side_title"], theme["gen_side_border"]))
 
     def _get_float_player(self):
         """获取或创建浮窗播放器单例"""
@@ -5995,9 +6034,10 @@ class MainWindow(QMainWindow):
         lst.setSpacing(8)
         lst.setSelectionMode(QAbstractItemView.ExtendedSelection)
         lst.setStyleSheet(
-            "QListWidget{background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;}"
+            "QListWidget{background:%s; border:1px solid %s; border-radius:8px;}"
             "QListWidget::item{padding:4px; border-radius:6px;}"
-            "QListWidget::item:selected{background:#dbeafe; border:1px solid #3b82f6;}")
+            "QListWidget::item:selected{background:%s; border:1px solid %s;}"
+            % (_ctok("table_alt"), _ctok("border"), _ctok("table_sel"), _ctok("accent")))
         for it in items:
             p = it["image"]
             item = QListWidgetItem()
@@ -7136,7 +7176,7 @@ class MainWindow(QMainWindow):
         # 标题栏
         hd = QHBoxLayout()
         t = QLabel("🎬 视频生成 · 选择剧集")
-        t.setStyleSheet("font-size:15px; font-weight:800; color:#1e293b;")
+        t.setStyleSheet("font-size:15px; font-weight:800; color:%s;" % _ctok("text"))
         hd.addWidget(t)
         cap = QLabel("为每一集创建独立生成区，视频保存到对应剧集文件夹")
         cap.setObjectName("cap")
@@ -7155,7 +7195,7 @@ class MainWindow(QMainWindow):
 
         self.gen_empty_tip = QLabel("暂无剧集\n点击「新建剧集」开始")
         self.gen_empty_tip.setAlignment(Qt.AlignCenter)
-        self.gen_empty_tip.setStyleSheet("color:#94a3b8; font-size:14px;")
+        self.gen_empty_tip.setStyleSheet("color:%s; font-size:14px;" % _ctok("text_faint"))
         lay.addWidget(self.gen_empty_tip)
 
         return p
@@ -7975,7 +8015,7 @@ class MainWindow(QMainWindow):
                       "会自动转成能正确分段的正则（编号/时长/单位均可省略或可变）；"
                       "「AI 分段」模式不使用段头正则，交由 LLM 智能切分。")
         hint.setWordWrap(True)
-        hint.setStyleSheet("color:#94a3b8; font-size:11px;")
+        hint.setStyleSheet("color:%s; font-size:11px;" % _ctok("text_faint"))
         form.addRow(hint)
         lay.addLayout(form)
         lay.addStretch(1)
@@ -8149,7 +8189,7 @@ class MainWindow(QMainWindow):
         tp = config.get_tokenplan_key_count()
         if config.is_tokenplan_mode():
             self.gen_key_lbl.setText("TokenPlan：Key×%d（×5 并发）" % tp)
-            self.gen_key_lbl.setStyleSheet("color:#7c3aed; font-weight:700;")
+            self.gen_key_lbl.setStyleSheet("color:%s; font-weight:700;" % _ctok("accent2"))
             self.gen_key_lbl.setToolTip(
                 "当前使用 TokenPlan Keys：共 %d 把，一键生成按 %d×5=%d 路满速并发，任务创建后超过 60s 才轮询。"
                 % (tp, tp, tp * 5))
@@ -8159,13 +8199,13 @@ class MainWindow(QMainWindow):
         if keys:
             display = "Key×%d" % len(keys)
             self.gen_key_lbl.setText("Key：" + display)
-            self.gen_key_lbl.setStyleSheet("color:#16a34a; font-weight:700;")
+            self.gen_key_lbl.setStyleSheet("color:%s; font-weight:700;" % _ctok("success"))
         elif primary:
             self.gen_key_lbl.setText("Key：" + config.mask_api_key(primary))
-            self.gen_key_lbl.setStyleSheet("color:#16a34a; font-weight:700;")
+            self.gen_key_lbl.setStyleSheet("color:%s; font-weight:700;" % _ctok("success"))
         else:
             self.gen_key_lbl.setText("未配置 Key")
-            self.gen_key_lbl.setStyleSheet("color:#dc2626;")
+            self.gen_key_lbl.setStyleSheet("color:%s;" % _ctok("danger"))
 
     def _gen_history_path(self):
         if getattr(self, "_current_project", None):
@@ -8287,7 +8327,7 @@ class MainWindow(QMainWindow):
         pix = QPixmap(path)
         if pix.isNull():
             _img.setText("无法加载图片")
-            _img.setStyleSheet("color:#94a3b8; font-size:14px;")
+            _img.setStyleSheet("color:%s; font-size:14px;" % _ctok("text_faint"))
         else:
             _img.setStyleSheet("")
             _img.setPixmap(pix.scaled(860, 620, Qt.KeepAspectRatio, Qt.SmoothTransformation))
@@ -8730,7 +8770,7 @@ class MainWindow(QMainWindow):
         if btn:
             btn.setChecked(self._capture_mode)
             btn.setText("🎯 抓包开" if self._capture_mode else "🎯 抓包关")
-            btn.setStyleSheet(("background:#2563eb;color:#fff;border-radius:8px;padding:6px 12px;"
+            btn.setStyleSheet(("background:%s;color:#fff;border-radius:8px;padding:6px 12px;" % _ctok("accent")
                                if self._capture_mode else ""))
         self._log("抓包已开启：播放时自动把可用的视频链接写入粘贴框" if self._capture_mode
                   else "抓包已关闭", "ok" if self._capture_mode else "info")
@@ -9925,7 +9965,7 @@ class MainWindow(QMainWindow):
         va_f.addRow("接口地址：", va_url)
         va_hint = QLabel("用于「视频分析」。模型选择自动切换服务商地址，也可手动填写任意 OpenAI 兼容端点。")
         va_hint.setWordWrap(True)
-        va_hint.setStyleSheet("color:#94a3b8; font-size:11px;")
+        va_hint.setStyleSheet("color:%s; font-size:11px;" % _ctok("text_faint"))
         va_f.addRow(va_hint)
         tabs.addTab(va_w, "🎞 视频分析")
 
@@ -10008,7 +10048,7 @@ class MainWindow(QMainWindow):
         vg_hint = QLabel("用于「视频生成」（Agnes Video）。API Keys 支持多 Key 轮询与 429 限速自动等待；"
                          "TokenPlan Keys 单独填写时，一键生成按 Key数×5 满速并发（每 Key 5 RPM），任务创建后超过 60s 才轮询状态。")
         vg_hint.setWordWrap(True)
-        vg_hint.setStyleSheet("color:#94a3b8; font-size:11px;")
+        vg_hint.setStyleSheet("color:%s; font-size:11px;" % _ctok("text_faint"))
         vg_f.addWidget(vg_hint)
         # 用滚动区包裹，防止内容较多时 TokenPlan 等输入框被裁出可视区域
         vg_scroll = QScrollArea()
@@ -10058,7 +10098,7 @@ class MainWindow(QMainWindow):
         ig_f.addRow("尺寸：", ig_size)
         ig_hint = QLabel("用于「资产生成图」（OpenAI 兼容 /images/generations）。智谱 cogview-3-flash 可免费生图；Agnes 图像模型需开通；也可填任意兼容端点。")
         ig_hint.setWordWrap(True)
-        ig_hint.setStyleSheet("color:#94a3b8; font-size:11px;")
+        ig_hint.setStyleSheet("color:%s; font-size:11px;" % _ctok("text_faint"))
         ig_f.addRow(ig_hint)
         tabs.addTab(ig_w, "🖼 资产生成图")
 
@@ -10368,11 +10408,11 @@ class MainWindow(QMainWindow):
         if tasks:
             desc = "，".join(tasks)
             self.global_status.setText("● " + desc)
-            self.global_status.setStyleSheet("color:#22c55e; font-weight:800; font-size:13px;")
+            self.global_status.setStyleSheet("color:%s; font-weight:800; font-size:13px;" % _ctok("success"))
             self.global_status.setToolTip(desc)
         else:
             self.global_status.setText("● 空闲")
-            self.global_status.setStyleSheet("color:#ef4444; font-weight:800; font-size:13px;")
+            self.global_status.setStyleSheet("color:%s; font-weight:800; font-size:13px;" % _ctok("danger"))
             self.global_status.setToolTip("当前无任务运行")
 
     def _global_status_click(self, event):
@@ -10445,24 +10485,71 @@ class MainWindow(QMainWindow):
     def _apply_theme(self, name="light"):
         """切换全局主题（light/dark），重新生成 QSS 并持久化偏好。"""
         self._theme = name
+        CURRENT_THEME["dark"] = (name == "dark")
         theme = THEME_DARK if name == "dark" else THEME_LIGHT
         self.setStyleSheet(build_app_qss(theme))
         layer = getattr(self, "_toast_layer", None)
         if layer is not None:
             layer.setStyleSheet(TOAST_QSS % theme)
-        side = getattr(self, "gen_side", None)
-        if side is not None:
-            side.setStyleSheet(
-                "QWidget#genSide{ background:%s; border-left:1px solid %s; }"
-                % (theme["gen_side_bg"], theme["gen_side_border"]))
-            if getattr(self, "gen_task_list", None) is not None:
-                self.gen_task_list.setStyleSheet(
-                    "QListWidget{ background:%s; color:%s; border:1px solid %s; border-radius:6px; }"
-                    % (theme["log_list_bg"], theme["log_list_text"], theme["gen_side_border"]))
+        if hasattr(self, "_gen_side_apply_theme"):
+            self._gen_side_apply_theme()
+        self._refresh_status_theme()
         self._settings.setValue("theme", name)
         btn = getattr(self, "theme_btn", None)
         if btn is not None:
             btn.setText("☀ 浅色" if name == "dark" else "🌙 深色")
+
+    def _refresh_status_theme(self):
+        """切换主题时刷新动态状态标签颜色（取当前主题 token，不覆盖状态文本）。"""
+        t = THEME_DARK if getattr(self, "_theme", "light") == "dark" else THEME_LIGHT
+        muted = t["text_muted"]
+        success = t["success"]
+        danger = t["danger"]
+        accent = t["accent"]
+
+        def _paint(lbl, default_val, success_text=None):
+            if getattr(lbl, "styleSheet", None) is None:
+                return
+            txt = lbl.text()
+            if success_text and txt in success_text:
+                lbl.setStyleSheet("color:%s;" % success)
+            else:
+                lbl.setStyleSheet("color:%s;" % default_val)
+
+        ext_state_share = getattr(self, "ext_state_share", None)
+        if ext_state_share is not None:
+            txt = ext_state_share.text()
+            if "已采集" in txt:
+                ext_state_share.setStyleSheet("color:%s;" % success)
+            elif "未" in txt:
+                ext_state_share.setStyleSheet("")
+            elif "失败" in txt:
+                ext_state_share.setStyleSheet("color:%s;" % danger)
+        ext_state_copy = getattr(self, "ext_state_copy", None)
+        if ext_state_copy is not None:
+            txt = ext_state_copy.text()
+            if "已采集" in txt:
+                ext_state_copy.setStyleSheet("color:%s;" % success)
+            elif "未" in txt:
+                ext_state_copy.setStyleSheet("")
+            elif "失败" in txt:
+                ext_state_copy.setStyleSheet("color:%s;" % danger)
+        # 各 status 标签（默认取 muted）
+        for n in ("ext_status", "sub_status", "va_status", "script_status"):
+            lbl = getattr(self, n, None)
+            if lbl is not None and lbl.styleSheet():
+                lbl.setStyleSheet("color:%s;" % muted)
+        # 生成区 Key 标签：按「已配置」状态用 accent，否则 muted
+        key_lbl = getattr(self, "gen_key_lbl", None)
+        if key_lbl is not None:
+            key_lbl.setStyleSheet("color:%s;" % (accent if "已配置" in key_lbl.text() else muted))
+        # 全局状态栏（红/绿）
+        gs = getattr(self, "global_status", None)
+        if gs is not None:
+            if gs.styleSheet().find("22c55e") >= 0 or gs.styleSheet().find("success") >= 0:
+                gs.setStyleSheet("color:%s; font-weight:800; font-size:13px;" % success)
+            else:
+                gs.setStyleSheet("color:%s; font-weight:800; font-size:13px;" % danger)
 
     def _toggle_theme(self):
         self._apply_theme("dark" if self._theme == "light" else "light")
