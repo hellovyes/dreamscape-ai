@@ -13,6 +13,7 @@ import re
 import sys
 import json
 import time
+import uuid
 import ctypes
 import ctypes.wintypes
 import logging
@@ -4175,7 +4176,7 @@ class MainWindow(QMainWindow):
         root_lay.addWidget(self._asset_stk)
         self._asset_stk.addWidget(self._build_asset_ep_list_page())
 
-        # ── 第1页：单集资产内容（原资产管理三分类+提取+预览）──
+        # ── 第1页：单集资产内容（二级标签：资产列表 + 图片生成）──
         content = QWidget()
         layout = QVBoxLayout(content)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -4194,6 +4195,27 @@ class MainWindow(QMainWindow):
         self._asset_ep_header.addWidget(self._asset_ep_title)
         self._asset_ep_header.addStretch(1)
         layout.addLayout(self._asset_ep_header)
+
+        # 二级标签：资产列表 + 图片生成（Muse-Image 整合）
+        self._asset_sub_tabs = QTabWidget()
+        self._asset_sub_tabs.setTabPosition(QTabWidget.South)
+        self._asset_sub_tabs.setDocumentMode(True)
+
+        # ── Tab 0：资产列表（原三分类+提取+预览）──
+        _asset_list_tab = QWidget()
+        alist_v = QVBoxLayout(_asset_list_tab)
+        alist_v.setContentsMargins(0, 0, 0, 0)
+        alist_v.setSpacing(6)
+        self._asset_sub_tabs.addTab(_asset_list_tab, "🗂 资产列表")
+
+        # ── Tab 1：图片生成（Muse-Image）──
+        _img_tab = self._build_asset_img_tab()
+        self._asset_sub_tabs.addTab(_img_tab, "🎨 图片生成")
+
+        layout.addWidget(self._asset_sub_tabs, 1)
+        # 后续资产列表内容全部加入 alist_v（Tab 0 布局）
+        layout = alist_v
+
 
         h = WrapFlowLayout(hspacing=6, vspacing=6)
         _atip = QLabel("🎨 资产管理 · 人物/场景/道具 资产仓库 · 手动上传或从剧本/分镜一键提取，AI 生图复用为参考图")
@@ -4326,7 +4348,428 @@ class MainWindow(QMainWindow):
         self._asset_img_worker = None
         self._asset_img_current = None
 
-    def _asset_pick_source(self):
+    # ════════════ Muse-Image 图片生成面板 ════════════
+    def _build_asset_img_tab(self):
+        """构建「图片生成」二级标签页：整合 Muse-Image 文字生图/参考图编辑/批量生成/画幅/质量。"""
+        p = QWidget()
+        v = QVBoxLayout(p)
+        v.setContentsMargins(6, 6, 6, 6)
+        v.setSpacing(6)
+
+        # ── 顶部提示 ──
+        tip = QLabel("🎨 图片生成 · 文字生图 / 参考图编辑 / 批量生成 · 模型设置复用「AI 服务」配置")
+        tip.setStyleSheet("font-size:11px; color:%s; font-weight:600;" % _ctok("text_muted"))
+        v.addWidget(tip)
+
+        # ── 参数面板（提示词 / 参考图 / 画幅 / 质量 / 数量）──
+        param_panel = QFrame()
+        param_panel.setStyleSheet("background:%s; border:1px solid %s; border-radius:8px;" % (_ctok("surface"), _ctok("border")))
+        pp_lay = QVBoxLayout(param_panel)
+        pp_lay.setContentsMargins(8, 8, 8, 8)
+        pp_lay.setSpacing(6)
+
+        # 提示词
+        self._img_prompt_edit = QPlainTextEdit()
+        self._img_prompt_edit.setPlaceholderText("📝 输入提示词，描述你想生成的图片（支持自然语言，AI 自动优化）")
+        self._img_prompt_edit.setFixedHeight(56)
+        pp_lay.addWidget(self._img_prompt_edit)
+
+        # 参考图（4 槽位，Muse-Image 风格）
+        ref_row = QHBoxLayout()
+        ref_row.setSpacing(6)
+        ref_row.addWidget(QLabel("🖼 参考图："), 0, Qt.AlignVCenter)
+        self._img_ref_slots = []
+        for i in range(4):
+            slot = QToolButton()
+            slot.setObjectName("imgRefSlot")
+            slot.setFixedSize(44, 44)
+            slot.setToolTip("参考图 %d（点击上传/删除）" % (i + 1))
+            slot.setCursor(Qt.PointingHandCursor)
+            slot.clicked.connect(lambda checked=False, _i=i: self._img_ref_pick(_i))
+            ref_row.addWidget(slot)
+            self._img_ref_slots.append(slot)
+        ref_row.addStretch(1)
+        pp_lay.addLayout(ref_row)
+
+        # 画幅 + 质量 + 数量
+        ctrl_row = QHBoxLayout()
+        ctrl_row.setSpacing(8)
+        ctrl_row.addWidget(QLabel("画幅"), 0, Qt.AlignVCenter)
+        self._img_aspect_cb = QComboBox()
+        self._img_aspect_cb.addItems(["9:16", "16:9", "1:1", "4:3", "3:4"])
+        self._img_aspect_cb.setFixedWidth(80)
+        ctrl_row.addWidget(self._img_aspect_cb)
+
+        ctrl_row.addWidget(QLabel("质量"), 0, Qt.AlignVCenter)
+        self._img_quality_cb = QComboBox()
+        self._img_quality_cb.addItems(["低", "中", "高"])
+        self._img_quality_cb.setCurrentText("中")
+        self._img_quality_cb.setFixedWidth(64)
+        ctrl_row.addWidget(self._img_quality_cb)
+
+        ctrl_row.addWidget(QLabel("数量"), 0, Qt.AlignVCenter)
+        self._img_count_spin = QSpinBox()
+        self._img_count_spin.setRange(1, 4)
+        self._img_count_spin.setValue(1)
+        self._img_count_spin.setFixedWidth(52)
+        ctrl_row.addWidget(self._img_count_spin)
+        ctrl_row.addStretch(1)
+        pp_lay.addLayout(ctrl_row)
+
+        v.addWidget(param_panel)
+
+        # ── 按钮区 ──
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(6)
+        self._img_gen_btn = QPushButton("⚡ 生成图片")
+        self._img_gen_btn.setObjectName("accentBtn")
+        self._img_gen_btn.setFixedHeight(32)
+        self._img_gen_btn.setMinimumWidth(120)
+        self._img_gen_btn.setCursor(Qt.PointingHandCursor)
+        self._img_gen_btn.clicked.connect(self._img_generate)
+        btn_row.addWidget(self._img_gen_btn)
+
+        self._img_cancel_btn = QPushButton("✕ 取消")
+        self._img_cancel_btn.setObjectName("ghostBtn")
+        self._img_cancel_btn.setFixedHeight(32)
+        self._img_cancel_btn.setFixedWidth(64)
+        self._img_cancel_btn.setCursor(Qt.PointingHandCursor)
+        self._img_cancel_btn.setVisible(False)
+        self._img_cancel_btn.clicked.connect(self._img_cancel)
+        btn_row.addWidget(self._img_cancel_btn)
+
+        self._img_add_asset_btn = QPushButton("➕ 添加到资产")
+        self._img_add_asset_btn.setObjectName("ghostBtn")
+        self._img_add_asset_btn.setFixedHeight(32)
+        self._img_add_asset_btn.setCursor(Qt.PointingHandCursor)
+        self._img_add_asset_btn.setVisible(False)
+        self._img_add_asset_btn.clicked.connect(self._img_add_to_asset)
+        btn_row.addWidget(self._img_add_asset_btn)
+
+        self._img_download_btn = QPushButton("⬇ 下载原图")
+        self._img_download_btn.setObjectName("ghostBtn")
+        self._img_download_btn.setFixedHeight(32)
+        self._img_download_btn.setCursor(Qt.PointingHandCursor)
+        self._img_download_btn.setVisible(False)
+        self._img_download_btn.clicked.connect(self._img_download)
+        btn_row.addWidget(self._img_download_btn)
+        btn_row.addStretch(1)
+        v.addLayout(btn_row)
+
+        # ── 生成状态条 ──
+        status_row = QHBoxLayout()
+        self._img_status_lbl = QLabel("就绪")
+        self._img_status_lbl.setStyleSheet("font-size:11px; font-weight:600; color:%s;" % _ctok("text_muted"))
+        status_row.addWidget(self._img_status_lbl)
+        status_row.addStretch(1)
+        v.addLayout(status_row)
+
+        # ── 结果网格（生成图预览）──
+        result_frame = QScrollArea()
+        result_frame.setWidgetResizable(True)
+        self._img_result_container = QWidget()
+        self._img_result_grid = WrapFlowLayout(self._img_result_container, hspacing=8, vspacing=8, margin=4)
+        result_frame.setWidget(self._img_result_container)
+        result_frame.setFixedHeight(280)
+        v.addWidget(result_frame, 1)
+
+        # 结果占位
+        self._img_results = []       # [{url, key, path}]
+        self._img_current_url = None # 当前选中
+        self._img_task_running = False
+        self._img_task_id = None
+
+        return p
+
+    def _img_ref_pick(self, idx):
+        """参考图槽位：点击上传/删除。"""
+        slot = self._img_ref_slots[idx]
+        if getattr(slot, "_img_ref_key", None):
+            # 已有图：点菜单删除或替换
+            menu = QMenu(self)
+            act_del = menu.addAction("✕ 删除此参考图")
+            act_re = menu.addAction("🔄 替换参考图")
+            chosen = menu.exec_(slot.mapToGlobal(QPoint(0, slot.height())))
+            if chosen == act_del:
+                self._img_ref_clear(idx)
+            elif chosen == act_re:
+                self._img_ref_upload(idx)
+        else:
+            self._img_ref_upload(idx)
+
+    def _img_open_for_asset(self, asset_data):
+        """从资产卡片右键菜单唤起图片生成面板：填入资产名作为提示词，切到图片生成标签页。"""
+        name = asset_data.get("name", "")
+        type_ = asset_data.get("type", "")
+        prompt = "生成「%s」的 %s 参考图，高清细腻，适合视频生成使用" % (name, type_ or "素材")
+        self._img_prompt_edit.setPlainText(prompt)
+        # 切到单集内容页（第1页）并选图片生成标签（Tab 1）
+        try:
+            if getattr(self, "_asset_stk", None):
+                self._asset_stk.setCurrentIndex(1)
+            if getattr(self, "_asset_sub_tabs", None):
+                self._asset_sub_tabs.setCurrentIndex(1)
+        except Exception:
+            pass
+        self._img_status_set("已填入「%s」提示词，点击「生成图片」开始" % name, "info")
+
+    def _img_ref_upload(self, idx):
+        """选择本地参考图，记录本地路径到槽位（后续生成时作为编辑参考）。"""
+        from PySide6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择参考图", "", "图片 (*.png *.jpg *.jpeg *.webp)")
+        if not path:
+            return
+        if not os.path.isfile(path):
+            self._img_status_set("参考图文件不存在", "err")
+            return
+        slot = self._img_ref_slots[idx]
+        slot._img_ref_key = path
+        slot.setText("✓")
+        slot.setToolTip("参考图 %d（本地：%s）" % (idx + 1, os.path.basename(path)))
+        slot.setStyleSheet("background:%s; color:#fff; font-weight:800; border:2px solid %s; border-radius:6px;" % (_ctok("accent"), _ctok("success")))
+        self._img_status_set("参考图 %d 已加载" % (idx + 1), "ok")
+
+    def _img_ref_clear(self, idx):
+        slot = self._img_ref_slots[idx]
+        slot._img_ref_key = None
+        slot.setText("🖼")
+        slot.setToolTip("参考图 %d（点击上传）" % (idx + 1))
+        slot.setStyleSheet("")
+        self._img_status_set("参考图 %d 已清除" % (idx + 1), "ok")
+
+    def _img_status_set(self, text, level="info"):
+        color = {"info": _ctok("text_muted"), "ok": _ctok("success"), "err": _ctok("danger"), "run": _ctok("accent")}.get(level, _ctok("text_muted"))
+        self._img_status_lbl.setText(text)
+        self._img_status_lbl.setStyleSheet("font-size:11px; font-weight:600; color:%s;" % color)
+
+    def _img_generate(self):
+        """触发图片生成（Muse-Image 文字生图 + 参考图编辑）。"""
+        prompt = self._img_prompt_edit.toPlainText().strip()
+        if not prompt:
+            self._img_status_set("请输入提示词", "err")
+            return
+        n = self._img_count_spin.value()
+        aspect = self._img_aspect_cb.currentText()
+        quality = self._img_quality_cb.currentText()
+
+        # 组装参考图
+        ref_urls = []
+        for slot in self._img_ref_slots:
+            url = getattr(slot, "_img_ref_key", None)
+            if url:
+                ref_urls.append(url)
+
+        self._img_task_running = True
+        self._img_task_id = str(uuid.uuid4())
+        self._img_gen_btn.setVisible(False)
+        self._img_cancel_btn.setVisible(True)
+        self._img_status_set("正在生成 %d 张图片（%s · %s）…" % (n, aspect, quality), "run")
+
+        # 后台线程调用 create_image_task
+        from gen_area import create_image_task
+
+        # 解析画幅为 size（宽x高）
+        aspect_sizes = {"9:16": "768x1344", "16:9": "1344x768", "1:1": "1024x1024", "4:3": "1024x768", "3:4": "768x1024"}
+        size = aspect_sizes.get(aspect, "1024x1024")
+
+        # 组装提示词（支持参考图编辑）
+        full_prompt = prompt
+        if ref_urls:
+            full_prompt += " [参考图编辑模式]"
+
+        cfg = config.IMAGE_GEN
+        api_key = cfg.get("api_key", "")
+        base_url = cfg.get("base_url") or config.IMAGE_GEN_DEFAULT_BASE
+        model = cfg.get("model", "cogview-3-flash")
+        out_dir = os.path.join(os.path.expanduser("~"), "幻镜AI", "img_gen")
+        os.makedirs(out_dir, exist_ok=True)
+
+        # 结果文件
+        ts = str(int(time.time() * 1000))
+        name_hint = "gen_%s" % ts
+        result_file = os.path.join(out_dir, "gen_result_%s.json" % ts)
+
+        class _ImgGenThread(QThread):
+            done_sig = Signal(object)
+            fail_sig = Signal(str)
+
+            def __init__(self, prompt, size, model, api_key, base_url, out_dir, name_hint, result_file, n):
+                super().__init__()
+                self._prompt = prompt
+                self._size = size
+                self._model = model
+                self._api_key = api_key
+                self._base_url = base_url
+                self._out_dir = out_dir
+                self._name_hint = name_hint
+                self._result_file = result_file
+                self._n = n
+
+            def run(self):
+                try:
+                    results = []
+                    for i in range(self._n):
+                        r = create_image_task(
+                            prompt=self._prompt,
+                            api_key=self._api_key,
+                            base_url=self._base_url,
+                            model=self._model,
+                            size=self._size,
+                            out_dir=self._out_dir,
+                            name_hint="%s_%d" % (self._name_hint, i),
+                        )
+                        results.append(r)
+                    # 保存结果索引
+                    import json
+                    with open(self._result_file, "w", encoding="utf-8") as f:
+                        json.dump(results, f, ensure_ascii=False, indent=2)
+                    self.done_sig.emit(results)
+                except Exception as e:
+                    self.fail_sig.emit(str(e))
+
+        self._img_thread = _ImgGenThread(full_prompt, size, model, api_key, base_url, out_dir, name_hint, result_file, n)
+        self._img_thread.done_sig.connect(self._img_on_done)
+        self._img_thread.fail_sig.connect(self._img_on_fail)
+        self._img_thread.start()
+
+    def _img_on_done(self, results):
+        self._img_task_running = False
+        self._img_gen_btn.setVisible(True)
+        self._img_cancel_btn.setVisible(False)
+        self._img_add_asset_btn.setVisible(True)
+        self._img_download_btn.setVisible(True)
+
+        # results: list of dicts from create_image_task
+        urls = []
+        keys = []
+        for r in (results or []):
+            if isinstance(r, dict):
+                if r.get("success") and r.get("image_path"):
+                    urls.append(r["image_path"])
+                    keys.append(os.path.basename(r["image_path"]))
+                else:
+                    err = r.get("error") or "未知错误"
+                    self._img_status_set("生成失败：%s" % err, "err")
+                    return
+
+        if urls:
+            self._img_results = [{"url": u, "key": k, "path": u} for u, k in zip(urls, keys)]
+            self._img_render_results()
+            self._img_status_set("已生成 %d 张图片" % len(urls), "ok")
+        else:
+            self._img_status_set("生成完成，但无图片", "err")
+
+    def _img_on_fail(self, err):
+        self._img_task_running = False
+        self._img_gen_btn.setVisible(True)
+        self._img_cancel_btn.setVisible(False)
+        self._img_status_set("生成失败：%s" % err, "err")
+
+    def _img_cancel(self):
+        if self._img_task_running and self._img_thread:
+            self._img_task_running = False
+            # 标记取消（QThread 无法真正中断，仅置标志）
+            self._img_gen_btn.setVisible(True)
+            self._img_cancel_btn.setVisible(False)
+            self._img_status_set("已取消", "info")
+
+    def _img_render_results(self):
+        """渲染生成结果到网格（本地文件缩略图）。"""
+        # 清空旧 widget
+        for i in range(self._img_result_grid.count()):
+            it = self._img_result_grid.itemAt(i)
+            if it and it.widget():
+                it.widget().deleteLater()
+        for res in self._img_results:
+            card = QFrame()
+            card.setStyleSheet(
+                "background:%s; border:1px solid %s; border-radius:8px;"
+                % (_ctok("surface"), _ctok("border")))
+            cl = QVBoxLayout(card)
+            cl.setContentsMargins(4, 4, 4, 4)
+            cl.setSpacing(2)
+            # 本地文件缩略图
+            path = res.get("path") or res.get("url", "")
+            pix = QPixmap(path) if os.path.isfile(path) else QPixmap()
+            if not pix.isNull():
+                pix = pix.scaled(120, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            img_lbl = QLabel()
+            img_lbl.setFixedSize(120, 120)
+            img_lbl.setAlignment(Qt.AlignCenter)
+            img_lbl.setStyleSheet("background:%s; border-radius:6px;" % _ctok("table_alt"))
+            if not pix.isNull():
+                img_lbl.setPixmap(pix)
+            else:
+                img_lbl.setText("🖼")
+                img_lbl.setStyleSheet("background:%s; border-radius:6px; color:%s; font-size:24px;" % (_ctok("table_alt"), _ctok("text_muted")))
+            cl.addWidget(img_lbl)
+            # 名称
+            name = QLabel(res.get("key") or "生成图")
+            name.setStyleSheet("font-size:10px; color:%s;" % _ctok("text_muted"))
+            name.setFixedSize(120, 16)
+            name.setToolTip(res.get("path") or res.get("url", ""))
+            cl.addWidget(name)
+            self._img_result_grid.addWidget(card)
+        self._img_result_container.updateGeometry()
+        self._img_result_grid.invalidate()
+
+    def _img_add_to_asset(self):
+        """将生成图片一键添加到当前剧集资产卡片（复制本地文件到 _assets_dir）。"""
+        if not self._img_results:
+            self._img_status_set("没有可添加的生成图", "err")
+            return
+        cur_ep = getattr(self, "_cur_asset_episode", None) or "默认"
+        # 取最后一张生成图
+        res = self._img_results[-1]
+        src_path = res.get("path") or res.get("url", "")
+        if not os.path.isfile(src_path):
+            self._img_status_set("源文件不存在：%s" % src_path, "err")
+            return
+        try:
+            import shutil
+            assets_dir = getattr(self, "_assets_dir", "")
+            if not assets_dir:
+                assets_dir = os.path.join(os.path.expanduser("~"), "红果短视频下载器", "assets")
+                self._assets_dir = assets_dir
+            # 确保当前集目录
+            ep_dir = os.path.join(assets_dir, cur_ep)
+            os.makedirs(ep_dir, exist_ok=True)
+            stem = os.path.splitext(os.path.basename(src_path))[0]
+            local_path = os.path.join(ep_dir, stem + ".png")
+            shutil.copy2(src_path, local_path)
+            res["path"] = local_path
+            res["key"] = stem
+            self._img_status_set("已添加到资产卡片（%s / %s）" % (cur_ep, stem), "ok")
+            # 刷新资产列表
+            self._asset_reload()
+        except Exception as e:
+            self._img_status_set("添加失败：%s" % str(e), "err")
+
+    def _img_download(self):
+        """将最新生成图（本地文件）复制到用户指定目录。"""
+        if not self._img_results:
+            self._img_status_set("没有可下载的图片", "err")
+            return
+        from PySide6.QtWidgets import QFileDialog
+        res = self._img_results[-1]
+        src = res.get("path") or res.get("url", "")
+        if not os.path.isfile(src):
+            self._img_status_set("源文件不存在：%s" % src, "err")
+            return
+        save_dir, _ = QFileDialog.getExistingDirectory(self, "选择保存目录", os.path.expanduser("~"))
+        if not save_dir:
+            return
+        try:
+            import shutil
+            stem = os.path.splitext(os.path.basename(src))[0]
+            dest = os.path.join(save_dir, stem + ".png")
+            shutil.copy2(src, dest)
+            self._img_status_set("已保存：%s" % dest, "ok")
+        except Exception as e:
+            self._img_status_set("保存失败：%s" % str(e), "err")
+
+    def _build_asset_page(self):
         from PySide6.QtWidgets import QFileDialog
         path, _ = QFileDialog.getOpenFileName(
             self, "选择分析结果", self._results_dir,
@@ -4821,7 +5264,7 @@ class MainWindow(QMainWindow):
         act_up = menu.addAction("📁 本地上传图片")
         is_person = (str(data.get("type") or "") == "人物")
         act_var = menu.addAction("🧵 管理服装变体") if is_person else None
-        act_gen = menu.addAction("🖼 生成此资产图")
+        act_gen = menu.addAction("🎨 生成此资产图（AI 生图）")
         act_del = menu.addAction("🗑 删除资产")
         act_use = menu.addAction("📎 用作参考图")
         act = menu.exec_(lst.mapToGlobal(pos))
@@ -4869,11 +5312,8 @@ class MainWindow(QMainWindow):
             self._asset_variant_manager(data)
         elif act == act_gen:
             self._asset_selected = data
-            if getattr(self, "_asset_img_worker", None) is not None and \
-                    self._asset_img_worker.isRunning():
-                QMessageBox.information(self, "提示", "已有资产生成任务进行中，请稍候再试")
-            else:
-                self._asset_gen_single()
+            # 唤起图片生成面板：切到图片生成标签页，填入资产名作为提示词
+            self._img_open_for_asset(data)
         elif act == act_del:
             self._asset_items.remove(data)
             self._asset_refresh_tree()
@@ -10689,6 +11129,8 @@ class MainWindow(QMainWindow):
             self._gen_side_apply_theme()
         self._refresh_status_theme()
         self._refresh_card_theme()
+        if hasattr(self, "_refresh_img_theme"):
+            self._refresh_img_theme()
         self._settings.setValue("theme", name)
         btn = getattr(self, "theme_btn", None)
         if btn is not None:
@@ -10784,6 +11226,30 @@ class MainWindow(QMainWindow):
         for lst in self.findChildren(QListWidget):
             if lst is not None and hasattr(lst, "viewport"):
                 lst.viewport().update()
+
+    def _refresh_img_theme(self):
+        """切换主题时刷新图片生成面板的手写配色 widget（静态样式）。"""
+        if not getattr(self, "_img_status_lbl", None):
+            return
+        try:
+            self._img_prompt_edit.setStyleSheet("background:%s; border:1px solid %s; border-radius:6px; color:%s;" % (_ctok("table_alt"), _ctok("border"), _ctok("text_main")))
+        except Exception:
+            pass
+        # 重新上色静态结果卡片背景
+        for i in range(self._img_result_grid.count()):
+            it = self._img_result_grid.itemAt(i)
+            if it and it.widget():
+                w = it.widget()
+                try:
+                    w.setStyleSheet("background:%s; border:1px solid %s; border-radius:8px;" % (_ctok("surface"), _ctok("border")))
+                    for lab in w.findChildren(QLabel):
+                        if lab.text() in ("🖼",) or lab.text().startswith("gen_"):
+                            lab.setStyleSheet("background:%s; border-radius:6px; color:%s; font-size:24px;" % (_ctok("table_alt"), _ctok("text_muted")))
+                except Exception:
+                    pass
+        # 状态条若当前为空闲态则取 muted
+        if not self._img_status_lbl.styleSheet().find("success") >= 0 and not self._img_status_lbl.styleSheet().find("danger") >= 0:
+            self._img_status_lbl.setStyleSheet("font-size:11px; font-weight:600; color:%s;" % _ctok("text_muted"))
 
     def _toggle_theme(self):
         self._apply_theme("dark" if self._theme == "light" else "light")
