@@ -4728,19 +4728,14 @@ class MainWindow(QMainWindow):
             return
         try:
             import shutil
-            assets_dir = getattr(self, "_assets_dir", "")
-            if not assets_dir:
-                assets_dir = os.path.join(os.path.expanduser("~"), "红果短视频下载器", "assets")
-                self._assets_dir = assets_dir
-            # 确保当前集目录
-            ep_dir = os.path.join(assets_dir, cur_ep)
-            os.makedirs(ep_dir, exist_ok=True)
-            stem = os.path.splitext(os.path.basename(src_path))[0]
-            local_path = os.path.join(ep_dir, stem + ".png")
-            shutil.copy2(src_path, local_path)
+            # 生成图统一纳入资产仓库「人物/场景/道具」分类目录（默认道具），不再散落在剧集目录
+            typ = str(self._asset_selected.get("type", "道具")) if getattr(self, "_asset_selected", None) else "道具"
+            dst = self._asset_store_image(src_path, cur_ep, typ)
+            stem = os.path.splitext(os.path.basename(dst))[0]
+            local_path = dst
             res["path"] = local_path
             res["key"] = stem
-            self._img_status_set("已添加到资产卡片（%s / %s）" % (cur_ep, stem), "ok")
+            self._img_status_set("已纳入资产仓库（%s / %s）" % (typ, stem), "ok")
             # 刷新资产列表
             self._asset_reload()
         except Exception as e:
@@ -4972,15 +4967,26 @@ class MainWindow(QMainWindow):
             len(chars)+len(scenes)+len(props), len(chars), len(scenes), len(props)))
 
     def _asset_fuzzy_match_image(self, name, want_type=""):
-        """在资产仓库 images 目录按资产名做模糊搜索，返回最匹配的图片路径或 None。
+        """在资产仓库「人物/场景/道具」目录按资产名做模糊搜索，返回最匹配的图片路径或 None。
         匹配规则：文件名去掉前后缀/多余修饰后，与资产名存在包含关系即视为命中；
-        多个候选时选“文件名与资产名重合字符最多”的一张；已绑定其它资产的图优先跳过。"""
-        img_dir = os.path.join(self._asset_root_dir(), "images")
-        if not os.path.isdir(img_dir):
-            return None
-        try:
-            fnames = os.listdir(img_dir)
-        except Exception:
+        多个候选时选“文件名与资产名重合字符最多”的一张；已绑定其它资产的图优先跳过。
+        指定 want_type 时，优先命中同分类目录下的图。"""
+        dirs = self._asset_category_dirs()
+        if want_type and want_type in ("人物", "场景", "道具"):
+            # 目标分类目录置顶，优先匹配
+            try:
+                primary = self._asset_category_dir(want_type)
+                dirs = [primary] + [d for d in dirs if os.path.abspath(d) != os.path.abspath(primary)]
+            except Exception:
+                pass
+        fnames = []  # (文件名, 所在目录)
+        for d in dirs:
+            if os.path.isdir(d):
+                try:
+                    fnames.extend((fn, d) for fn in os.listdir(d))
+                except Exception:
+                    continue
+        if not fnames:
             return None
         used = set()
         for it in self._asset_items:
@@ -4992,10 +4998,10 @@ class MainWindow(QMainWindow):
             return None
         best = None
         best_score = -1
-        for fn in fnames:
+        for fn, d in fnames:
             if not fn.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp")):
                 continue
-            p = os.path.join(img_dir, fn)
+            p = os.path.join(d, fn)
             if os.path.abspath(p) in used:
                 continue
             base = os.path.splitext(fn)[0]
@@ -5038,7 +5044,7 @@ class MainWindow(QMainWindow):
                 for k in ("prompt", "role", "appearance", "description"):
                     if k in ni and ni.get(k) and not target.get(k):
                         target[k] = ni[k]
-                # 复用资产若无图：尝试按名称在资产仓库 images 模糊匹配自动补图
+                # 复用资产若无图：尝试按名称在资产仓库 分类目录 模糊匹配自动补图
                 if not (target.get("image") and isinstance(target["image"], str)
                         and os.path.isfile(target["image"])):
                     auto_img = self._asset_fuzzy_match_image(name, typ)
@@ -5048,7 +5054,7 @@ class MainWindow(QMainWindow):
             else:
                 newadd += 1
                 item = dict(ni)
-                # 新建资产若无图：尝试按名称在资产仓库 images 模糊匹配自动补图
+                # 新建资产若无图：尝试按名称在资产仓库 分类目录 模糊匹配自动补图
                 auto_img = self._asset_fuzzy_match_image(name, typ)
                 if auto_img:
                     item["image"] = auto_img
@@ -5362,7 +5368,7 @@ class MainWindow(QMainWindow):
         """管理人物资产的面部/服装变体（variants 列表）。支持：
         - 添加变体：填服装标签 + 从本地选一张变体图
         - 删除变体
-        变体图写入资产仓库 images，写入该人物的 variants。
+        变体图写入资产仓库对应分类目录（人物/场景/道具），写入该人物的 variants。
         """
         name = str(data.get("name") or "")
         typ = str(data.get("type") or "")
@@ -5380,7 +5386,7 @@ class MainWindow(QMainWindow):
             variants = []
             target["variants"] = variants
 
-        repo = os.path.join(self._asset_root_dir(), "images")
+        repo = self._asset_category_dir(typ) if typ else self._asset_category_dir("人物")
         try:
             os.makedirs(repo, exist_ok=True)
         except Exception:
@@ -5413,7 +5419,7 @@ class MainWindow(QMainWindow):
                 if not path or not os.path.isfile(path):
                     QMessageBox.information(self, "提示", "已取消添加（未选择图片）")
                     continue
-                img = self._asset_store_image(path, newlabel.strip())
+                img = self._asset_store_image(path, newlabel.strip(), typ)
                 variants.append({"label": newlabel.strip(), "image": img})
                 self._asset_save()
                 self._asset_reload()
@@ -5431,29 +5437,32 @@ class MainWindow(QMainWindow):
 
     def _asset_upload_local(self, data):
         """上传/绑定本地图片为该资产主图（右键「本地上传图片」与无图卡片双击统一入口）：
-        - 所选图片已在资产仓库 images 内 → 直接引用，不重复复制；
-        - 否则复制进仓库 images 再关联。"""
+        - 所选图片已在资产仓库任一分类目录内 → 直接引用，不重复复制；
+        - 否则复制进对应分类目录（人物/场景/道具）再关联。"""
         if data is None:
             return
         name = str(data.get("name") or "")
         typ = str(data.get("type") or "")
-        repo = os.path.join(self._asset_root_dir(), "images")
+        cat_dir = self._asset_category_dir(typ)
         try:
-            os.makedirs(repo, exist_ok=True)
+            os.makedirs(cat_dir, exist_ok=True)
         except Exception:
             pass
         path, _ = QFileDialog.getOpenFileName(
-            self, "上传本地图片到「%s」" % name, repo,
+            self, "上传本地图片到「%s」" % name, cat_dir,
             "图片 (*.png *.jpg *.jpeg *.webp *.bmp);;所有文件 (*.*)")
         if not path:
             return
         if not os.path.isfile(path):
             QMessageBox.warning(self, "提示", "所选文件不存在")
             return
-        if os.path.abspath(path).startswith(os.path.abspath(repo)):
-            dst = path  # 已在仓库：直接引用，避免复制出重复副本
+        # 仓库内（任一分类目录）→ 直接引用；否则复制进对应分类目录
+        ap = os.path.abspath(path)
+        in_repo = any(ap.startswith(os.path.abspath(d)) for d in self._asset_category_dirs())
+        if in_repo:
+            dst = path
         else:
-            dst = self._asset_store_image(path, name)
+            dst = self._asset_store_image(path, name, typ)
             if not dst or not os.path.isfile(dst):
                 QMessageBox.warning(self, "提示", "图片复制失败：%s" % dst)
                 return
@@ -5462,12 +5471,10 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "提示", "未能在资产列表中找到「%s」，请刷新后重试" % name)
 
-    def _asset_store_image(self, src, asset_name=None):
-        """复制本地图片进资产仓库 images；带资产名则写入文件名，便于日后按名找回。"""
+    def _asset_store_image(self, src, asset_name=None, asset_type=None):
+        """复制本地图片进对应分类目录（人物/场景/道具）；带资产名则写入文件名，便于日后按名找回。"""
         try:
-            d = self._asset_root_dir("images")
-            if not d:
-                return src
+            d = self._asset_category_dir(asset_type)
             os.makedirs(d, exist_ok=True)
             ext = os.path.splitext(src)[1] or ".png"
             safe = ""
@@ -5482,7 +5489,7 @@ class MainWindow(QMainWindow):
             return src
 
     def _asset_bind_local(self, data=None):
-        """从本地资产仓库 images 目录选择已下载的图片绑定到资产：
+        """从本地资产仓库「人物/场景/道具」目录选择已下载的图片绑定到资产：
         - data 为空 → 弹出可视化绑定窗口，左侧图片缩略图、右侧资产下拉逐一对应；
         - data 非空 → 直接为指定资产选一张本地图。"""
         if data is None:
@@ -5490,7 +5497,7 @@ class MainWindow(QMainWindow):
             return
         name = str(data.get("name") or "")
         typ = str(data.get("type") or "")
-        default_dir = os.path.join(self._asset_root_dir(), "images")
+        default_dir = self._asset_category_dir(typ)
         path, _ = QFileDialog.getOpenFileName(
             self, "绑定本地图片到「%s」" % name, default_dir,
             "图片 (*.png *.jpg *.jpeg *.webp *.bmp);;所有文件 (*.*)")
@@ -5506,12 +5513,14 @@ class MainWindow(QMainWindow):
 
     def _asset_open_bind_dialog(self):
         """可视批量绑定：把本地已下载图片对应到资产卡片（免重新生成）。"""
-        img_dir = os.path.join(self._asset_root_dir(), "images")
-        if not os.path.isdir(img_dir):
-            QMessageBox.information(self, "提示", "本地图片目录不存在：\n%s" % img_dir)
+        imgs = []
+        for d in self._asset_category_dirs():
+            if os.path.isdir(d):
+                imgs.extend(os.path.join(d, fn) for fn in sorted(os.listdir(d))
+                            if fn.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp")))
+        if not imgs:
+            QMessageBox.information(self, "提示", "资产仓库（人物/场景/道具）没有本地图片。")
             return
-        imgs = [os.path.join(img_dir, fn) for fn in sorted(os.listdir(img_dir))
-                if fn.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp"))]
         # 已被某个资产绑定的图片跳过
         used = set()
         for it in self._asset_items:
@@ -5527,7 +5536,7 @@ class MainWindow(QMainWindow):
         dlg.setWindowTitle("绑定本地已下载图片到资产")
         dlg.resize(760, 520)
         lay = QVBoxLayout(dlg)
-        tip = QLabel("左侧为「资产仓库/images」中已下载但尚未绑定的图片（可点选预览）。\n"
+        tip = QLabel("左侧为「资产仓库/人物|场景|道具」中已下载但尚未绑定的图片（可点选预览）。\n"
                      "选中一张图片 → 右侧选择目标资产 → 点击「⬅ 绑定到该资产」。")
         tip.setWordWrap(True)
         tip.setStyleSheet("color:%s; font-size:12px;" % _ctok("text_muted"))
@@ -5620,7 +5629,7 @@ class MainWindow(QMainWindow):
         self._asset_status("已绑定「%s」的本地图片" % asset["name"])
 
     def _asset_open_img_dir(self, img_dir=None):
-        img_dir = img_dir or os.path.join(self._asset_root_dir(), "images")
+        img_dir = img_dir or self._asset_root_dir()
         if os.path.isdir(img_dir):
             os.startfile(img_dir)  # noqa  Windows 打开资源管理器
 
@@ -5694,6 +5703,22 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         return os.path.join(base, sub) if sub else base
+
+    def _asset_category_dir(self, typ):
+        """资产图片按分类存放到「资产仓库/<人物|场景|道具>」子目录。"""
+        t = str(typ or "")
+        if t not in ("人物", "场景", "道具"):
+            t = "道具"
+        d = self._asset_root_dir(t)
+        try:
+            os.makedirs(d, exist_ok=True)
+        except Exception:
+            pass
+        return d
+
+    def _asset_category_dirs(self):
+        """所有分类图片目录（含旧 images 兼容），用于扫描/绑定/自动补图。"""
+        return [self._asset_category_dir(t) for t in ("人物", "场景", "道具")]
 
     def _asset_extract_from_scripts(self):
         texts = []
@@ -5786,14 +5811,14 @@ class MainWindow(QMainWindow):
         self._asset_scan_local_images(silent=True)
 
     def _asset_scan_local_images(self, silent=False):
-        """扫描本地「资产仓库/images」中已下载的图片，若文件名含某资产名，
+        """扫描本地「资产仓库/人物|场景|道具」中已下载的图片，若文件名含某资产名，
         且该资产尚未绑定图片，则自动关联显示（无需重新生成）。"""
-        img_dir = os.path.join(self._asset_root_dir(), "images")
-        files = []
-        if os.path.isdir(img_dir):
-            for fn in os.listdir(img_dir):
-                if fn.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp")):
-                    files.append(fn)
+        files = []  # (文件名, 所在目录)
+        for d in self._asset_category_dirs():
+            if os.path.isdir(d):
+                for fn in os.listdir(d):
+                    if fn.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp")):
+                        files.append((fn, d))
         if not files:
             return 0
         bound = 0
@@ -5804,14 +5829,22 @@ class MainWindow(QMainWindow):
             name = str(it.get("name") or "").strip()
             if not name:
                 continue
-            # 找文件名包含资产名的图片（排除已绑定到其它资产的）
+            want_cat = self._asset_category_dir(it.get("type"))
+            # 优先命中「同分类目录」下的图，其次任意目录命中
             hit = None
-            for fn in files:
-                if name in fn:
-                    p = os.path.join(img_dir, fn)
+            for fn, d in files:
+                if name in fn and os.path.abspath(d) == os.path.abspath(want_cat):
+                    p = os.path.join(d, fn)
                     if os.path.isfile(p):
                         hit = p
                         break
+            if hit is None:
+                for fn, d in files:
+                    if name in fn:
+                        p = os.path.join(d, fn)
+                        if os.path.isfile(p):
+                            hit = p
+                            break
             if hit:
                 it["image"] = hit
                 bound += 1
@@ -5828,19 +5861,19 @@ class MainWindow(QMainWindow):
         return bound
 
     def _asset_has_unbound_local_images(self):
-        """本地 images 目录是否存在未被任何资产绑定的图片。"""
-        img_dir = os.path.join(self._asset_root_dir(), "images")
-        if not os.path.isdir(img_dir):
-            return False
+        """本地分类目录（人物/场景/道具）是否存在未被任何资产绑定的图片。"""
         used = set()
         for it in self._asset_items:
             p = it.get("image")
             if p and isinstance(p, str):
                 used.add(os.path.abspath(p))
-        for fn in os.listdir(img_dir):
-            if fn.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp")):
-                if os.path.abspath(os.path.join(img_dir, fn)) not in used:
-                    return True
+        for d in self._asset_category_dirs():
+            if not os.path.isdir(d):
+                continue
+            for fn in os.listdir(d):
+                if fn.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp")):
+                    if os.path.abspath(os.path.join(d, fn)) not in used:
+                        return True
         return False
 
     def _asset_gen_single(self):
@@ -5896,7 +5929,6 @@ class MainWindow(QMainWindow):
                 "请先在「⚙ AI 服务」→「资产生成图」页签中配置 API Key")
             self._asset_finish_img_queue()
             return
-        out_dir = self._asset_root_dir("images")
         max_conc = self._asset_img_max_concurrent()
         # 扫描队列中第一个有图的跳过，直到找到需要生成的
         while self._asset_img_index < len(self._asset_img_queue):
@@ -5906,6 +5938,7 @@ class MainWindow(QMainWindow):
             self._asset_img_index += 1
             if item.get("image"):
                 continue   # 已有图，跳过
+            out_dir = self._asset_category_dir(item.get("type"))
             self._asset_img_slots += 1
             self._asset_status("正在生成「%s」（%d/%d，并发 slot %d/%d）…" % (
                 item["name"],
