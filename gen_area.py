@@ -10,7 +10,8 @@ import time
 from PySide6.QtCore import Qt, Signal, QSize, QUrl, QThread, QEvent, QPoint, QTimer, QRect
 from PySide6.QtGui import (QPixmap, QTextCharFormat, QFont, QColor, QTextCursor,
                            QImage, QPainter, QBrush, QPen,
-                           QGuiApplication, QIcon)
+                           QGuiApplication, QIcon, QAction)
+
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
                                QLabel, QComboBox, QLineEdit, QPlainTextEdit,
                                QPushButton, QListWidget, QListWidgetItem,
@@ -884,9 +885,14 @@ class GenAreaWidget(QWidget):
         self.merge_btn.setObjectName("ghostBtn")
         self.merge_btn.setFixedSize(28, 28)
         self.merge_btn.setCursor(Qt.PointingHandCursor)
-        self.merge_btn.setStyleSheet("font-size:16px; font-weight:bold; padding:0;")
-        self.merge_btn.setToolTip("加入合并列表（再次点击取消选中）")
-        self.merge_btn.clicked.connect(self._toggle_merge)
+        # 非选中态：深色 + 号清晰可见（背景透明、圆角、描边），避免"白色圆"看不清
+        self._merge_default_style = ("QPushButton{background:transparent;color:#1e293b;border:1.5px solid #cbd5e1;"
+                                     "border-radius:6px;font-size:16px;font-weight:bold;padding:0;}"
+                                     "QPushButton:hover{background:#f1f5f9;border-color:#94a3b8;}"
+                                     "QPushButton#ghostBtn{border:1.5px solid #cbd5e1;background:transparent;}")
+        self.merge_btn.setStyleSheet(self._merge_default_style)
+        self.merge_btn.setToolTip("点击展开：往当前卡片后插入新剧集")
+        self.merge_btn.clicked.connect(self._open_merge_menu)
         title_row.addWidget(self.merge_btn)
         cv.addLayout(title_row)
 
@@ -1548,29 +1554,43 @@ class GenAreaWidget(QWidget):
         self.reflist.blockSignals(False)
         self.state_changed.emit()   # 参考图增删/排序等变化 → 触发上层持久化
 
+    def _open_merge_menu(self):
+        """点击小 + 弹出菜单：往当前卡片后插入一个新剧集（空生成区）。
+        替代原"加入合并列表"行为。"""
+        m = QMenu(self)
+        m.setStyleSheet(
+            "QMenu{background:#ffffff; border:1.5px solid #cbd5e1; border-radius:8px; padding:4px;}"
+            "QMenu::item{padding:7px 22px 7px 12px; border-radius:6px; color:#1e293b; font-size:12px;}"
+            "QMenu::item:selected{background:#dbeafe; color:#2563eb;}")
+        ins = QAction("➕ 往本卡片后插入剧集", m)
+        ins.triggered.connect(self._insert_episode_after)
+        m.addAction(ins)
+        m.popup(self.merge_btn.mapToGlobal(QPoint(0, self.merge_btn.height())))
+
+    def _insert_episode_after(self):
+        """往当前卡片后插入一个空生成区（由 MainWindow 实现，这里通过回调触发）。"""
+        if hasattr(self, "insert_after_requested"):
+            self.insert_after_requested.emit(self)
+        elif self.parent_widget and hasattr(self.parent_widget, "_gen_insert_after"):
+            self.parent_widget._gen_insert_after(self)
+
     def _toggle_merge(self):
         self._merge_selected = getattr(self, "_merge_selected", False)
         self._merge_selected = not self._merge_selected
-        if self._merge_selected:
-            self.merge_btn.setStyleSheet("""
-                QPushButton{background:#2563eb;color:#fff;border-radius:13px;font-weight:bold;font-size:14px;}
-                QPushButton:hover{background:#1d4ed8;}""")
-            self.parent_widget and self.parent_widget._merge_selection_changed()
-        else:
-            self.merge_btn.setStyleSheet("")
-            self.parent_widget and self.parent_widget._merge_selection_changed()
+        self.merge_status_style(self._merge_selected)
+        self.parent_widget and self.parent_widget._merge_selection_changed()
 
     def set_parent(self, parent):
         self.parent_widget = parent
 
     def merge_status_style(self, selected):
-        """供外部同步选中状态样式。"""
+        """供外部同步选中状态样式；非选中态恢复默认深色 + 号（修复白色圆）。"""
         if selected:
             self.merge_btn.setStyleSheet("""
                 QPushButton{background:#2563eb;color:#fff;border-radius:13px;font-weight:bold;font-size:14px;}
                 QPushButton:hover{background:#1d4ed8;}""")
         else:
-            self.merge_btn.setStyleSheet("")
+            self.merge_btn.setStyleSheet(getattr(self, "_merge_default_style", ""))
 
     def _reuse(self):
         src = (self._get_sniffer() or "").strip()

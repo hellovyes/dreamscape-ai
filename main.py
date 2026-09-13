@@ -1858,6 +1858,51 @@ class EpGenCardAdd(QFrame):
             self.added.emit()
         super().mousePressEvent(event)
 
+class GenAreaCardAdd(QFrame):
+    """生成区卡片流末尾的「+ 添加」卡片：点击追加一个新生成区（类似剧集卡片/资产卡片的 +）。
+    尺寸由 _gen_relayout_areas 统一控制，与生成区卡片同宽。"""
+    added = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setObjectName("genAreaCardAdd")
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+        v.addStretch(1)
+        ic = QLabel("+")
+        ic.setAlignment(Qt.AlignCenter)
+        ic.setStyleSheet("font-size:32px; font-weight:300; color:%s; background:transparent;" % _ctok("text_faint"))
+        self._icon = ic
+        v.addWidget(ic)
+        nm = QLabel("添加生成区")
+        nm.setAlignment(Qt.AlignCenter)
+        nm.setStyleSheet("font-size:11px; color:%s; background:transparent;" % _ctok("text_muted"))
+        self._name = nm
+        v.addWidget(nm)
+        v.addStretch(1)
+        self._apply_card_theme()
+
+    def _apply_card_theme(self):
+        self.setStyleSheet(f"""
+            QFrame#genAreaCardAdd {{
+                background:{_ctok('card_hover')};
+                border:2px dashed {_ctok('card_dashed')};
+                border-radius:12px;
+                min-height:150px;
+            }}
+            QFrame#genAreaCardAdd:hover {{
+                border:2px solid {_ctok('card_border_sel')};
+                background:{_ctok('card_sel')};
+            }}
+        """)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.added.emit()
+        super().mousePressEvent(event)
+
 class AssetEpCard(QFrame):
     """资产管理 · 分集卡片：点击进入该分集的资产编辑。"""
     opened = Signal(str)
@@ -5492,36 +5537,34 @@ class MainWindow(QMainWindow):
         self.gen_key_lbl = QLabel("未配置 Key")
         self.gen_key_lbl.setStyleSheet("color:%s;" % _ctok("text_muted"))
         hd.addWidget(self.gen_key_lbl)
-        self.gen_add_ep = QPushButton("➕ 添加剧集")
-        self.gen_add_ep.setObjectName("accentBtn")
-        self.gen_add_ep.setMinimumHeight(34)
-        self.gen_add_ep.setToolTip("为需要生成的每一集添加一个独立生成区")
-        self.gen_add_ep.clicked.connect(self._gen_add_area)
-        hd.addWidget(self.gen_add_ep)
         pp.addWidget(head)
 
         # 全局设置区：全局提示词 + 分镜提示词 + 画幅 + 一键动作（全部并入此区，统一布局）
         gbox = QGroupBox("🌐 全局设置")
         gbox.setObjectName("card")
         gl = QHBoxLayout(gbox)
-        gl.setContentsMargins(8, 6, 8, 8)
-        gl.setSpacing(10)
-        # 左列：全局提示词（画面风格、统一约束，生成时自动前置到每个生成区）
+        gl.setContentsMargins(6, 3, 6, 5)
+        gl.setSpacing(8)
+        # 左列：全局提示词（点击任意位置弹出放大编辑框；此处为紧凑的只读预览，不影响输入）
         left_v = QVBoxLayout()
-        left_v.setSpacing(4)
-        left_v.addWidget(QLabel("🌐 全局提示词："))
+        left_v.setSpacing(2)
+        left_v.addWidget(QLabel("🌐 全局提示词（点击展开）："))
         self.gen_global_edit = QPlainTextEdit()
-        self.gen_global_edit.setPlaceholderText("现代都市真人短剧，写实摄影，自然窗光，保持角色资产与空间轴线连续……")
-        self.gen_global_edit.setFixedHeight(96)
+        self.gen_global_edit.setPlaceholderText("点击此处展开编辑全局提示词…")
+        self.gen_global_edit.setFixedHeight(48)
+        self.gen_global_edit.setCursor(Qt.IBeamCursor)
+        self.gen_global_edit.mousePressEvent = lambda _e: self._gen_expand_prompt(self.gen_global_edit, "全局提示词")
         left_v.addWidget(self.gen_global_edit)
         gl.addLayout(left_v, 3)
-        # 中列：分镜提示词（粘贴本地分镜文本，按分镜切段生成；粘贴后按回车自动分段）
+        # 中列：分镜提示词（点击展开编辑；粘贴完成后按回车自动切段创建生成区）
         mid_v = QVBoxLayout()
-        mid_v.setSpacing(4)
-        mid_v.addWidget(QLabel("📋 分镜提示词（粘贴后按回车分段）："))
+        mid_v.setSpacing(2)
+        mid_v.addWidget(QLabel("📋 分镜提示词（粘贴后回车分段）："))
         self.gen_storyboard_edit = QPlainTextEdit()
-        self.gen_storyboard_edit.setPlaceholderText("在此粘贴本地分镜文本，粘贴完成后按回车自动切段创建生成区…")
-        self.gen_storyboard_edit.setFixedHeight(96)
+        self.gen_storyboard_edit.setPlaceholderText("点击此处展开编辑；粘贴分镜文本后按回车自动切段…")
+        self.gen_storyboard_edit.setFixedHeight(48)
+        self.gen_storyboard_edit.setCursor(Qt.IBeamCursor)
+        self.gen_storyboard_edit.mousePressEvent = lambda _e: self._gen_expand_prompt(self.gen_storyboard_edit, "分镜提示词")
         mid_v.addWidget(self.gen_storyboard_edit)
         gl.addLayout(mid_v, 3)
         # 右列：画幅 + 一键动作（一排两个按钮，省高度）
@@ -5570,6 +5613,10 @@ class MainWindow(QMainWindow):
 
         self.gen_area_wrap = QWidget()
         self.gen_area_lay = FlowLayout(self.gen_area_wrap, margin=4, hspacing=6, vspacing=6)
+        # 生成区卡片流末尾的「+ 添加」卡片：点击追加一个新生成区（替代顶部按钮）
+        self.gen_add_card = GenAreaCardAdd()
+        self.gen_add_card.added.connect(self._gen_add_area)
+        self.gen_area_lay.addWidget(self.gen_add_card)
 
         # 顶部合并工具条
         self._merge_bar = QHBoxLayout()
@@ -5981,7 +6028,7 @@ class MainWindow(QMainWindow):
             src = self.sub_text.toPlainText().strip()
         return src
 
-    def _gen_add_area(self):
+    def _gen_add_area(self, after_area=None):
         idx = len(self._gen_areas)
         area = GenAreaWidget(idx,
                              get_sniffer_text=self._gen_sniffer_text,
@@ -5996,7 +6043,11 @@ class MainWindow(QMainWindow):
         area.remove_requested.connect(self._gen_remove_area)
         area.generated.connect(self._gen_batch_continue)
         area.set_parent(self)
-        self._gen_areas.append(area)
+        if after_area is not None and after_area in self._gen_areas:
+            pos = self._gen_areas.index(after_area) + 1
+            self._gen_areas.insert(pos, area)
+        else:
+            self._gen_areas.append(area)
         # 新生成区默认应用当前全局画幅（未显式设定期用自身默认）
         _ga = getattr(self, "_gen_global_aspect", "") or ""
         if _ga and _ga in ASPECT_RATIOS:
@@ -6004,11 +6055,15 @@ class MainWindow(QMainWindow):
                 area.aspect.setCurrentText(_ga)
             except Exception:
                 pass
-        self.gen_area_lay.addWidget(area)   # FlowLayout：宽屏两列、窄屏自动换行
+        self.gen_area_lay.addWidget(area)
+        # 让「+ 添加」卡片始终保持在末尾（新区域插入到 + 卡片之前）
+        add_item = self.gen_area_lay._items[-1]
+        area_item = self.gen_area_lay._items[-2]
+        self.gen_area_lay._items[-2] = add_item
+        self.gen_area_lay._items[-1] = area_item
         self.gen_area_wrap.updateGeometry()  # 强制刷新布局高度，支持多生成区滚动
         self._gen_relayout_areas()            # 按当前宽度让生成区面板横向撑满（贴近右侧视频任务面板）
         self._sync_asset_list_to_area(area)
-        self.gen_add_ep.setText("➕ 添加剧集（已 %d 个）" % (idx + 1))
         # 提示词/参数/参考图变化 → 防抖自动持久化到当前剧集（退出/切剧集也不丢）
         area.state_changed.connect(self._gen_area_schedule_save)
         # 立即持久化当前剧集（含生成区内容），保证退出/切剧集不丢失
@@ -6173,10 +6228,13 @@ class MainWindow(QMainWindow):
             self.gen_area_lay.removeWidget(area)
             area.deleteLater()
             self._gen_relayout_areas()
-            self.gen_add_ep.setText("➕ 添加剧集（已 %d 个）" % len(self._gen_areas))
             self._gen_clear_merge()
             if not getattr(self, "_gen_suppress_save", False) and getattr(self, "_current_gen_episode", None):
                 self._save_gen_areas_to_episode()
+
+    def _gen_insert_after(self, after_area):
+        """在指定生成区「之后」插入一个新生成区（卡片右上角小+ → 插入剧集）。"""
+        self._gen_add_area(after_area=after_area)
 
     def _gen_clear_merge(self):
         """清除所有生成区的合并选中状态。"""
@@ -6218,7 +6276,6 @@ class MainWindow(QMainWindow):
                 self.gen_area_lay.removeWidget(a)
                 a.deleteLater()
         self._gen_relayout_areas()
-        self.gen_add_ep.setText("➕ 添加剧集（已 %d 个）" % len(self._gen_areas))
         # 清除所有选中状态
         self._gen_clear_merge()
         self._log("已删除 %d 个生成区" % len(selected), "ok")
@@ -6284,7 +6341,6 @@ class MainWindow(QMainWindow):
             a.deleteLater()
         self._gen_relayout_areas()
         self._gen_clear_merge()
-        self.gen_add_ep.setText("➕ 添加剧集（已 %d 个）" % len(self._gen_areas))
         self._log("合并 %d 个生成区 → 保留第1个，其余已删除" % len(selected), "ok")
 
     def _gen_merge_all_auto(self):
@@ -6349,7 +6405,6 @@ class MainWindow(QMainWindow):
         self._gen_areas = new_areas
         self._gen_relayout_areas()
         self._gen_clear_merge()
-        self.gen_add_ep.setText("➕ 添加剧集（已 %d 个）" % len(new_areas))
         total_merged = len(areas) - len(new_areas)
         self._log("一键自动合并 %d 个 → %d 个（每份最多 %ds，相邻剧情连贯）" % (len(areas), len(new_areas), max_dur), "ok")
 
@@ -6397,6 +6452,11 @@ class MainWindow(QMainWindow):
             col_w = (eff - (cols - 1) * hsp) // cols
             for wd in widgets:
                 wd.setFixedWidth(col_w)
+            # 让「+ 添加」卡片也保持与生成区卡片同宽（排布在末尾）
+            try:
+                self.gen_add_card.setFixedWidth(col_w)
+            except Exception:
+                pass
             lay.invalidate()
             self.gen_area_wrap.updateGeometry()
             self.gen_area_wrap.setMinimumHeight(0)
@@ -7627,6 +7687,45 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         self._log("已把各区画幅批量设为 %s（默认），之后各区仍可单独修改" % self._gen_global_aspect, "info")
+
+    def _gen_expand_prompt(self, target_edit, title):
+        """点击提示词框 → 弹出放大编辑框（QDialog），在其中输入/粘贴/编辑，
+        确认后写回紧凑框；不影响紧凑框的占位与布局，节省页面空间。"""
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dv = QVBoxLayout(dlg)
+        dv.setContentsMargins(12, 12, 12, 12)
+        dv.setSpacing(6)
+        lbl = QLabel(title + "：")
+        lbl.setStyleSheet("font-size:12px; font-weight:700; color:%s;" % _ctok("text"))
+        dv.addWidget(lbl)
+        ed = QPlainTextEdit()
+        ed.setPlainText(target_edit.toPlainText())
+        ed.setFixedHeight(260)
+        dv.addWidget(ed, 1)
+        bb = QHBoxLayout()
+        bb.addStretch(1)
+        okbtn = QPushButton("保存并关闭")
+        okbtn.setObjectName("accentBtn")
+        okbtn.setMinimumHeight(30)
+        okbtn.setCursor(Qt.PointingHandCursor)
+        okbtn.clicked.connect(dlg.accept)
+        bb.addWidget(okbtn)
+        cancelbtn = QPushButton("关闭（不保存）")
+        cancelbtn.setObjectName("ghostBtn")
+        cancelbtn.setMinimumHeight(30)
+        cancelbtn.setCursor(Qt.PointingHandCursor)
+        cancelbtn.clicked.connect(dlg.reject)
+        bb.addWidget(cancelbtn)
+        dv.addLayout(bb)
+        dlg.resize(520, 320)
+        # 弹窗关闭后，若点击了"保存"，把放大框文本写回紧凑框
+        if dlg.exec() == QDialog.Accepted:
+            target_edit.setPlainText(ed.toPlainText())
+            if target_edit is getattr(self, "gen_global_edit", None):
+                self._log("已更新全局提示词", "ok")
+            elif target_edit is getattr(self, "gen_storyboard_edit", None):
+                self._log("已更新分镜提示词粘贴框", "ok")
 
     def _gen_storyboard_from_paste(self):
         """从粘贴框读取分镜文本，复用本地分镜解析逻辑一键创建生成区。"""
@@ -10611,6 +10710,8 @@ class MainWindow(QMainWindow):
         for c in self.findChildren(EpGenCard):
             c.setStyleSheet(c._card_css())
         for c in self.findChildren(EpGenCardAdd):
+            c._apply_card_theme()
+        for c in self.findChildren(GenAreaCardAdd):
             c._apply_card_theme()
         # 自绘卡片（_CardDelegate）需重绘列表项以应用新配色
         for lst in self.findChildren(QListWidget):
