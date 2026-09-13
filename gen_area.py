@@ -22,6 +22,14 @@ import config
 from agnes_video import CreateTaskWorker, PollWorker, download_video, save_video_local, ASPECT_RATIOS
 
 
+class NoWheelComboBox(QComboBox):
+    """禁用滚轮切项的组合框：光标悬停在组合框上滚动时，滚轮交还给外层滚动区，
+    避免在滚动「视频生成区」时误改时长/画幅等下拉值。"""
+    def wheelEvent(self, e):
+        # 直接忽略组合框自身的滚轮事件；外层 QScrollArea 仍可正常滚动。
+        e.ignore()
+
+
 # 参考图原始保留上限：允许填充/手动添加超过 5 张，发送时按「≤5 张」自动合并为 单图 + 拼接图。
 # 5 组 × 最高 3 合一 = 15 张，保证组数不超过 5 且能尽量保留全部原图。
 _MAX_REF = 15
@@ -919,14 +927,14 @@ class GenAreaWidget(QWidget):
         row2 = QHBoxLayout()
         row2.setSpacing(4)
         row2.addWidget(QLabel("时长:"), 0)
-        self.seconds = QComboBox()
+        self.seconds = NoWheelComboBox()
         self.seconds.addItems(getattr(config, "VIDEO_SECONDS", ["5", "10"]))
         self.seconds.setCurrentText("10")
         self.seconds.setMinimumWidth(56)
         self.seconds.currentIndexChanged.connect(lambda *_: self.state_changed.emit())
         row2.addWidget(self.seconds, 0)
         row2.addWidget(QLabel("画幅:"), 0)
-        self.aspect = QComboBox()
+        self.aspect = NoWheelComboBox()
         self.aspect.addItems(ASPECT_RATIOS)
         self.aspect.setCurrentText("16:9")
         self.aspect.setMinimumWidth(56)

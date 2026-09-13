@@ -58,7 +58,7 @@ from video_analyzer import (FrameGrabber, VaDownloadWorker, GlmWorker, CombineWo
 from agnes_video import (CreateTaskWorker, PollWorker, download_video,
                          ASPECT_RATIOS, VIDEO_SECONDS)
 from player_widgets import OverlayPlayer, VolSlider, ClickVideoWidget, vol_icon, VideoPlayerCard, FloatPlayerWindow
-from gen_area import GenAreaWidget
+from gen_area import GenAreaWidget, NoWheelComboBox
 import mitm_proxy
 from mitm_proxy import CapturingProxy, ensure_ca as mitm_ensure_ca, \
     install_ca as mitm_install_ca, set_system_proxy as mitm_set_proxy
@@ -146,6 +146,7 @@ THEME_LIGHT = {
     "header_bg": "#f1f5f9",
     "input_bg": "#fbfdff",
     "input_border": "#d1d9e6",
+    "input_text": "#1f2937",
     "table_alt": "#f8fafc",
     "table_sel": "#dbeafe",
     "table_sel_text": "#1e3a8a",
@@ -153,6 +154,14 @@ THEME_LIGHT = {
     "merge_panel_bg": "#eff6ff",
     "merge_panel_border": "#bfdbfe",
     "titlebar_bg": "#ffffff",
+    "card_bg": "#ffffff",
+    "card_hover": "#f8fafc",
+    "card_sel": "#eff6ff",
+    "card_border_sel": "#2563eb",
+    "card_text": "#1e293b",
+    "card_sub": "#64748b",
+    "card_sel_text": "#ffffff",
+    "card_dashed": "#cbd5e1",
     "tooltip_bg": "#ffffff",
     "tooltip_text": "#1f2937",
     "tooltip_border": "#d1d9e6",
@@ -192,6 +201,7 @@ THEME_DARK = {
     "header_bg": "#101828",
     "input_bg": "#0f172a",
     "input_border": "#26324f",
+    "input_text": "#f1f5f9",
     "table_alt": "#101828",
     "table_sel": "#1e3a5f",
     "table_sel_text": "#bfdbfe",
@@ -205,6 +215,14 @@ THEME_DARK = {
     "merge_panel_bg": "#101a30",
     "merge_panel_border": "#1e3a5f",
     "titlebar_bg": "#0f172a",
+    "card_bg": "#131b2e",
+    "card_hover": "#1e293b",
+    "card_sel": "#1e3a5f",
+    "card_border_sel": "#3b82f6",
+    "card_text": "#e2e8f0",
+    "card_sub": "#94a3b8",
+    "card_sel_text": "#dbeafe",
+    "card_dashed": "#334155",
     "tooltip_bg": "#1e293b",
     "tooltip_text": "#e2e8f0",
     "tooltip_border": "#334155",
@@ -271,7 +289,7 @@ QTabWidget::pane { border: 1px solid %(border)s; border-radius: 10px; background
 QLineEdit, QTextEdit, QSpinBox, QComboBox, QDoubleSpinBox {
     background: %(input_bg)s; border: 1px solid %(input_border)s;
     border-radius: 10px; padding: 7px 12px; selection-background-color: %(accent)s;
-    transition: border 120ms; }
+    transition: border 120ms; color: %(input_text)s; }
 QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QComboBox:focus, QDoubleSpinBox:focus {
     border: 1.5px solid %(accent)s; }
 QTextEdit { background: %(surface_alt)s; }
@@ -1113,22 +1131,22 @@ class EpCard(QFrame):
 
     def _apply_style(self):
         if self._playing:
-            bg, bd, tn, te, ts = "#ffffff", "#8b5cf6", "#334155", "#ffffff", "#334155"
+            bg, bd, tn, te, ts = _ctok("card_bg"), _ctok("accent2"), _ctok("text"), _ctok("text_faint"), _ctok("text_muted")
         elif self._sel:
-            bg, bd, tn, te, ts = "#2563eb", "#2563eb", "#ffffff", "#cfe0ff", "#daebff"
+            bg, bd, tn, te, ts = _ctok("card_sel"), _ctok("card_border_sel"), _ctok("card_sel_text"), _ctok("card_sel_text"), _ctok("card_sel_text")
         else:
-            bg, bd, tn, te, ts = "#ffffff", "#e2e8f0", "#334155", "#059669", "#64748b"
+            bg, bd, tn, te, ts = _ctok("card_bg"), _ctok("border"), _ctok("text"), _ctok("success"), _ctok("text_muted")
         self.setStyleSheet(
             f"EpCard {{ background:{bg}; border:1px solid {bd}; border-radius:8px; }}"
             f"EpCard QLabel {{ background:transparent; }}"
             f"EpCard QLabel#epNum {{ font-size:16px; font-weight:700; color:{tn}; }}"
             f"EpCard QLabel#epTyp {{ font-size:8px; color:{te}; "
             f"background:rgba(5,150,105,0.10); padding:0px 3px; border-radius:6px; font-weight:600; }}"
-            f"EpCard QLabel#epEq {{ font-size:9px; color:#8b5cf6; letter-spacing:0px; }}"
+            f"EpCard QLabel#epEq {{ font-size:9px; color:{_ctok('accent2')}; letter-spacing:0px; }}"
             f"EpCard QLabel#epStatus {{ font-size:8px; color:{ts}; }}"
             f"EpCard QToolButton#epDel {{ background:transparent; border:none; "
-            f"color:#cbd5e1; font-size:10px; font-weight:700; padding:0px; border-radius:7px; }}"
-            f"EpCard QToolButton#epDel:hover {{ background:#fee2e2; color:#dc2626; }}")
+            f"color:{_ctok('text_faint')}; font-size:10px; font-weight:700; padding:0px; border-radius:7px; }}"
+            f"EpCard QToolButton#epDel:hover {{ background:{_ctok('danger_bg')}; color:{_ctok('danger')}; }}")
 
     def set_color(self, *a):
         pass
@@ -1394,9 +1412,17 @@ class LocalFileCard(QFrame):
 
     def _apply_style(self):
         if self._sel:
-            bg, bd, tn, te, ts = "#2563eb", "#2563eb", "#ffffff", "#ffffff", "#daebff"
+            bg = _ctok("card_sel")
+            bd = _ctok("card_border_sel")
+            tn = _ctok("card_sel_text")
+            te = _ctok("card_sel_text")
+            ts = _ctok("card_sel_text")
         else:
-            bg, bd, tn, te, ts = "#ffffff", "#e2e8f0", "#334155", "#059669", "#475569"
+            bg = _ctok("card_bg")
+            bd = _ctok("border")
+            tn = _ctok("text")
+            te = _ctok("success")
+            ts = _ctok("text_muted")
         self.setStyleSheet(
             f"LocalFileCard {{ background:{bg}; border:1px solid {bd}; border-radius:8px; }}"
             f"LocalFileCard QLabel {{ background:transparent; }}"
@@ -1415,16 +1441,16 @@ class _CardDelegate(QStyledItemDelegate):
         painter.setRenderHint(QPainter.Antialiasing)
         rect = option.rect.adjusted(3, 3, -3, -3)
         st = option.state
-        # 使用白色背景，参考剧集卡片样式
+        # 跟随主题：选中/悬停/普通 三态卡片配色
         if st & QStyle.State_Selected:
-            bg = QColor("#eff6ff")
-            border = QColor("#2563eb")
+            bg = QColor(_ctok("card_sel"))
+            border = QColor(_ctok("card_border_sel"))
         elif st & QStyle.State_MouseOver:
-            bg = QColor("#f8fafc")
-            border = QColor("#2563eb")
+            bg = QColor(_ctok("card_hover"))
+            border = QColor(_ctok("card_border_sel"))
         else:
-            bg = QColor("#ffffff")
-            border = QColor("#e2e8f0")
+            bg = QColor(_ctok("card_bg"))
+            border = QColor(_ctok("border"))
         path = QPainterPath()
         path.addRoundedRect(rect, 14, 14)
         painter.fillPath(path, bg)
@@ -1446,14 +1472,14 @@ class _CardDelegate(QStyledItemDelegate):
         tf.setPixelSize(15)
         tf.setBold(True)
         painter.setFont(tf)
-        painter.setPen(QColor("#1e293b"))
+        painter.setPen(QColor(_ctok("card_text")))
         painter.drawText(rect.adjusted(60, 8, -10, -22),
                          int(Qt.AlignLeft | Qt.AlignVCenter) | int(Qt.TextWordWrap), name)
         sf = option.font
         sf.setPixelSize(12)
         sf.setBold(False)
         painter.setFont(sf)
-        painter.setPen(QColor("#64748b"))
+        painter.setPen(QColor(_ctok("card_sub")))
         painter.drawText(rect.adjusted(60, -20, -10, -6),
                          int(Qt.AlignLeft | Qt.AlignBottom), sub)
         painter.restore()
@@ -1484,8 +1510,8 @@ class ProjectCard(QPushButton):
         self.setCursor(Qt.PointingHandCursor)
         self.setText("")
         self.setStyleSheet(
-            "QPushButton { background:#ffffff; border:1px solid #e2e8f0; border-radius:14px; text-align:left; }"
-            "QPushButton:hover { border:2px solid #2563eb; background:#f8fafc; }"
+            f"QPushButton {{ background:{_ctok('card_bg')}; border:1px solid {_ctok('border')}; border-radius:14px; text-align:left; }}"
+            f"QPushButton:hover {{ border:2px solid {_ctok('card_border_sel')}; background:{_ctok('card_hover')}; }}"
         )
         v = QVBoxLayout(self)
         v.setContentsMargins(14, 10, 14, 12)
@@ -1502,8 +1528,8 @@ class ProjectCard(QPushButton):
         self.delb = QPushButton("✕")
         self.delb.setFixedSize(22, 22)
         self.delb.setStyleSheet(
-            "QPushButton{border:none; border-radius:11px; color:#94a3b8; font-weight:900; background:transparent;}"
-            "QPushButton:hover{background:#fee2e2; color:#dc2626;}")
+            f"QPushButton{{border:none; border-radius:11px; color:{_ctok('text_faint')}; font-weight:900; background:transparent;}}"
+            f"QPushButton:hover{{background:{_ctok('danger_bg')}; color:{_ctok('danger')};}}")
         self.delb.setCursor(Qt.PointingHandCursor)
         self.delb.clicked.connect(lambda: self.deleted.emit(self._name))
         top.addWidget(self.delb)
@@ -1517,6 +1543,16 @@ class ProjectCard(QPushButton):
         for _c in (ic, self.nm, self.ctime):
             _c.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.clicked.connect(lambda: self.openProject.emit(self._name))
+
+    def _apply_card_theme(self):
+        """切换主题时刷新 ProjectCard 卡片配色。"""
+        self.setStyleSheet(
+            f"QPushButton {{ background:{_ctok('card_bg')}; border:1px solid {_ctok('border')}; border-radius:14px; text-align:left; }}"
+            f"QPushButton:hover {{ border:2px solid {_ctok('card_border_sel')}; background:{_ctok('card_hover')}; }}")
+        self.nm.setStyleSheet("font-size:15px; font-weight:800; color:%s; background:transparent;" % _ctok("text"))
+        self.delb.setStyleSheet(
+            f"QPushButton{{border:none; border-radius:11px; color:{_ctok('text_faint')}; font-weight:900; background:transparent;}}"
+            f"QPushButton:hover{{background:{_ctok('danger_bg')}; color:{_ctok('danger')};}}")
 
     def set_data(self, name, created):
         """更新卡片显示（不重建对象，信号连接保持不变）。"""
@@ -1569,8 +1605,8 @@ class EpGenCard(QFrame):
         self.delb = QPushButton("✕")
         self.delb.setFixedSize(22, 22)
         self.delb.setStyleSheet(
-            "QPushButton{border:none; border-radius:11px; color:%s; font-weight:900; background:transparent;}"
-            "QPushButton:hover{background:#fee2e2; color:#dc2626;}" % _ctok("text_faint"))
+            f"QPushButton{{border:none; border-radius:11px; color:%s; font-weight:900; background:transparent;}}"
+            f"QPushButton:hover{{background:{_ctok('danger_bg')}; color:{_ctok('danger')};}}" % _ctok("text_faint"))
         self.delb.setCursor(Qt.PointingHandCursor)
         self.delb.setFocusPolicy(Qt.NoFocus)
         self.delb.clicked.connect(lambda: self.deleted.emit(self._name))
@@ -1591,10 +1627,10 @@ class EpGenCard(QFrame):
 
     def _card_css(self):
         if self._selected:
-            return ("QFrame#epGenCard { background:#eff6ff; border:2px solid #2563eb; border-radius:14px; }"
-                    "QFrame#epGenCard:hover { border:2px solid #1d4ed8; background:#dbeafe; }")
-        return ("QFrame#epGenCard { background:#ffffff; border:1px solid #e2e8f0; border-radius:14px; }"
-                "QFrame#epGenCard:hover { border:2px solid #2563eb; background:#f8fafc; }")
+            return (f"QFrame#epGenCard {{ background:{_ctok('card_sel')}; border:2px solid {_ctok('card_border_sel')}; border-radius:14px; }}"
+                    f"QFrame#epGenCard:hover {{ border:2px solid {_ctok('accent_hover')}; background:{_ctok('table_sel')}; }}")
+        return (f"QFrame#epGenCard {{ background:{_ctok('card_bg')}; border:1px solid {_ctok('border')}; border-radius:14px; }}"
+                f"QFrame#epGenCard:hover {{ border:2px solid {_ctok('card_border_sel')}; background:{_ctok('card_hover')}; }}")
 
     def _check_double_click(self):
         """检测是否为双击：先延迟，若已标记为双击则触发打开"""
@@ -1788,17 +1824,6 @@ class EpGenCardAdd(QFrame):
         self.setFixedSize(220, 130)
         self.setCursor(Qt.PointingHandCursor)
         self.setObjectName("epGenCardAdd")
-        self.setStyleSheet("""
-            QFrame#epGenCardAdd {
-                background:#f8fafc;
-                border:2px dashed #cbd5e1;
-                border-radius:14px;
-            }
-            QFrame#epGenCardAdd:hover {
-                border:2px solid #2563eb;
-                background:#eff6ff;
-            }
-        """)
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
@@ -1808,6 +1833,20 @@ class EpGenCardAdd(QFrame):
         ic.setStyleSheet("font-size:32px; font-weight:300; color:%s; background:transparent;" % _ctok("text_faint"))
         v.addWidget(ic)
         v.addStretch(1)
+        self._apply_card_theme()
+
+    def _apply_card_theme(self):
+        self.setStyleSheet(f"""
+            QFrame#epGenCardAdd {{
+                background:{_ctok('card_hover')};
+                border:2px dashed {_ctok('card_dashed')};
+                border-radius:14px;
+            }}
+            QFrame#epGenCardAdd:hover {{
+                border:2px solid {_ctok('card_border_sel')};
+                background:{_ctok('card_sel')};
+            }}
+        """)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -1824,9 +1863,6 @@ class AssetEpCard(QFrame):
         self.setFixedSize(220, 110)
         self.setCursor(Qt.PointingHandCursor)
         self.setObjectName("assetEpCard")
-        self.setStyleSheet(
-            "QFrame#assetEpCard { background:#ffffff; border:1px solid #e2e8f0; border-radius:14px; }"
-            "QFrame#assetEpCard:hover { border:2px solid #2563eb; background:#eff6ff; }")
         v = QVBoxLayout(self)
         v.setContentsMargins(14, 14, 14, 12)
         v.setSpacing(8)
@@ -1836,14 +1872,20 @@ class AssetEpCard(QFrame):
         top.addWidget(ic)
         self.nm = QLabel(name)
         self.nm.setWordWrap(True)
-        self.nm.setStyleSheet("font-size:15px; font-weight:800; color:%s; background:transparent;" % _ctok("text"))
         top.addWidget(self.nm, 1)
         v.addLayout(top)
         v.addStretch(1)
         self.esc = QLabel("查看/提取该分集资产")
         self.esc.setObjectName("cap")
-        self.esc.setStyleSheet("background:transparent; color:%s; font-size:12px;" % _ctok("text_muted"))
         v.addWidget(self.esc)
+        self._apply_style()
+
+    def _apply_style(self):
+        self.setStyleSheet(
+            f"QFrame#assetEpCard {{ background:{_ctok('card_bg')}; border:1px solid {_ctok('border')}; border-radius:14px; }}"
+            f"QFrame#assetEpCard:hover {{ border:2px solid {_ctok('card_border_sel')}; background:{_ctok('card_sel')}; }}")
+        self.nm.setStyleSheet("font-size:15px; font-weight:800; color:%s; background:transparent;" % _ctok("text"))
+        self.esc.setStyleSheet("background:transparent; color:%s; font-size:12px;" % _ctok("text_muted"))
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton and self.rect().contains(event.pos()):
@@ -5502,7 +5544,7 @@ class MainWindow(QMainWindow):
         mid_v.setSpacing(4)
         mid_v.addWidget(QLabel("画幅："))
         self._gen_global_aspect = "16:9"
-        self.gen_global_aspect = QComboBox()
+        self.gen_global_aspect = NoWheelComboBox()
         self.gen_global_aspect.addItems(ASPECT_RATIOS)
         try:
             cur = self._gen_areas[0].aspect.currentText() if self._gen_areas else "16:9"
@@ -10494,6 +10536,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_gen_side_apply_theme"):
             self._gen_side_apply_theme()
         self._refresh_status_theme()
+        self._refresh_card_theme()
         self._settings.setValue("theme", name)
         btn = getattr(self, "theme_btn", None)
         if btn is not None:
@@ -10550,6 +10593,30 @@ class MainWindow(QMainWindow):
                 gs.setStyleSheet("color:%s; font-weight:800; font-size:13px;" % success)
             else:
                 gs.setStyleSheet("color:%s; font-weight:800; font-size:13px;" % danger)
+
+    def _refresh_card_theme(self):
+        """切换主题时刷新手写配色卡片（分集/本地文件/剧集卡片/自绘列表卡片）的样式与重绘。"""
+        for cls in (AssetEpCard, LocalFileCard, EpCard, ProjectCard):
+            for c in self.findChildren(cls):
+                if cls is ProjectCard:
+                    c._apply_card_theme()
+                else:
+                    apply = getattr(c, "_apply_style", None)
+                    if apply:
+                        apply()
+        for c in getattr(self, "_gen_file_cards", None) or []:
+            apply = getattr(c, "_apply_style", None)
+            if apply:
+                apply()
+        # EpGenCard（_card_css）与 EpGenCardAdd（_apply_card_theme）重新取主题 token
+        for c in self.findChildren(EpGenCard):
+            c.setStyleSheet(c._card_css())
+        for c in self.findChildren(EpGenCardAdd):
+            c._apply_card_theme()
+        # 自绘卡片（_CardDelegate）需重绘列表项以应用新配色
+        for lst in self.findChildren(QListWidget):
+            if lst is not None and hasattr(lst, "viewport"):
+                lst.viewport().update()
 
     def _toggle_theme(self):
         self._apply_theme("dark" if self._theme == "light" else "light")
