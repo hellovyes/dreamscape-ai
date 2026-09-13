@@ -2626,6 +2626,11 @@ class MainWindow(QMainWindow):
         self.global_status.setCursor(Qt.PointingHandCursor)
         self.global_status.mousePressEvent = self._global_status_click
         wsbar.addWidget(self.global_status)
+        # 视频生成 Key 脱敏指示（放在「状态灯」与「设置」之间），跨页面可见
+        self.gen_key_lbl = QLabel("未配置 Key")
+        self.gen_key_lbl.setStyleSheet("color:%s; font-size:12px; font-weight:700;" % _ctok("text_muted"))
+        self.gen_key_lbl.setToolTip("视频生成 Key 状态（脱敏显示）")
+        wsbar.addWidget(self.gen_key_lbl)
         # 全局「设置」入口（统一配置 AI 服务 / 分段设置；状态灯旁，跨页面可见）
         self.ai_services_btn = QPushButton("⚙ 设置")
         self.ai_services_btn.setObjectName("ghostBtn")
@@ -5532,12 +5537,7 @@ class MainWindow(QMainWindow):
         pp.setContentsMargins(0, 0, 0, 0)
         pp.setSpacing(0)
 
-        head = QWidget()
-        hd = WrapFlowLayout(head, margin=0, hspacing=8, vspacing=6)
-        self.gen_key_lbl = QLabel("未配置 Key")
-        self.gen_key_lbl.setStyleSheet("color:%s;" % _ctok("text_muted"))
-        hd.addWidget(self.gen_key_lbl)
-        pp.addWidget(head)
+        # 全局设置区（Key 脱敏指示已上移至顶部栏「状态灯」与「设置」之间）
 
         # 全局设置区：全局提示词 + 分镜提示词 + 画幅 + 一键动作（全部并入此区，统一布局）
         gbox = QGroupBox("🌐 全局设置")
@@ -5545,32 +5545,24 @@ class MainWindow(QMainWindow):
         gl = QHBoxLayout(gbox)
         gl.setContentsMargins(6, 3, 6, 5)
         gl.setSpacing(8)
-        # 左列：全局提示词（点击任意位置弹出放大编辑框；此处为紧凑的只读预览，不影响输入）
-        left_v = QVBoxLayout()
-        left_v.setSpacing(2)
-        left_v.addWidget(QLabel("🌐 全局提示词（点击展开）："))
+        # 左列：全局提示词（点击任意位置弹出放大编辑框；此处为紧凑预览，不影响输入）
         self.gen_global_edit = QPlainTextEdit()
-        self.gen_global_edit.setPlaceholderText("点击此处展开编辑全局提示词…")
+        self.gen_global_edit.setPlaceholderText("🌐 全局提示词：点击展开编辑…")
         self.gen_global_edit.setFixedHeight(48)
         self.gen_global_edit.setCursor(Qt.IBeamCursor)
         self.gen_global_edit.mousePressEvent = lambda _e: self._gen_expand_prompt(self.gen_global_edit, "全局提示词")
-        left_v.addWidget(self.gen_global_edit)
-        gl.addLayout(left_v, 3)
+        gl.addWidget(self.gen_global_edit, 3)
         # 中列：分镜提示词（点击展开编辑；粘贴完成后按回车自动切段创建生成区）
-        mid_v = QVBoxLayout()
-        mid_v.setSpacing(2)
-        mid_v.addWidget(QLabel("📋 分镜提示词（粘贴后回车分段）："))
         self.gen_storyboard_edit = QPlainTextEdit()
-        self.gen_storyboard_edit.setPlaceholderText("点击此处展开编辑；粘贴分镜文本后按回车自动切段…")
+        self.gen_storyboard_edit.setPlaceholderText("📋 分镜提示词：粘贴后按回车分段…")
         self.gen_storyboard_edit.setFixedHeight(48)
         self.gen_storyboard_edit.setCursor(Qt.IBeamCursor)
         self.gen_storyboard_edit.mousePressEvent = lambda _e: self._gen_expand_prompt(self.gen_storyboard_edit, "分镜提示词")
-        mid_v.addWidget(self.gen_storyboard_edit)
-        gl.addLayout(mid_v, 3)
-        # 右列：画幅 + 三个动作按钮，紧凑布局，整列高度对齐左侧 48px 提示词框（不再超出）
+        gl.addWidget(self.gen_storyboard_edit, 3)
+        # 右列：画幅 + 三个动作按钮，两排各两个（画幅 | 一键分镜 / 一键全部生成 | 本地分镜）
         right_v = QVBoxLayout()
         right_v.setContentsMargins(0, 0, 0, 0)
-        right_v.setSpacing(3)
+        right_v.setSpacing(4)
         self._gen_global_aspect = "16:9"
         self.gen_global_aspect = NoWheelComboBox()
         self.gen_global_aspect.addItems(ASPECT_RATIOS)
@@ -5582,30 +5574,32 @@ class MainWindow(QMainWindow):
             self.gen_global_aspect.setCurrentText(cur)
         self._gen_global_aspect = self.gen_global_aspect.currentText()
         self.gen_global_aspect.currentIndexChanged.connect(self._gen_global_aspect_changed)
-        right_v.addWidget(self.gen_global_aspect)
-        # 三个按钮：前两个并排一行（各半宽），第三个通栏（整行）——与两行提示词框等宽等高对齐
-        row = QHBoxLayout()
-        row.setSpacing(6)
-        self.gen_all_btn = QPushButton("⚡ 一键全部生成")
-        self.gen_all_btn.setObjectName("accentBtn")
-        self.gen_all_btn.setFixedHeight(30)
-        self.gen_all_btn.setToolTip("按顺序自动为每个已填提示词的生成区逐集生成，完成后自动保存到当前剧集文件夹（生成剧集\\<剧集名>\\）")
-        self.gen_all_btn.clicked.connect(self._gen_toggle_batch)
-        row.addWidget(self.gen_all_btn, 1)
+        r_row1 = QHBoxLayout()
+        r_row1.setSpacing(6)
         self.gen_split_btn = QPushButton("🎬 一键分镜")
         self.gen_split_btn.setObjectName("accentBtn")
-        self.gen_split_btn.setFixedHeight(30)
+        self.gen_split_btn.setFixedHeight(28)
         self.gen_split_btn.setToolTip("按「视频嗅探」页分段分析的每个分镜，一键创建独立生成区（自动填入该段提示词与时长）")
         self.gen_split_btn.clicked.connect(self._gen_split_storyboard)
-        row.addWidget(self.gen_split_btn, 1)
-        right_v.addLayout(row)
+        r_row1.addWidget(self.gen_global_aspect, 1)
+        r_row1.addWidget(self.gen_split_btn, 1)
+        right_v.addLayout(r_row1)
+        r_row2 = QHBoxLayout()
+        r_row2.setSpacing(6)
+        self.gen_all_btn = QPushButton("⚡ 一键全部生成")
+        self.gen_all_btn.setObjectName("accentBtn")
+        self.gen_all_btn.setFixedHeight(28)
+        self.gen_all_btn.setToolTip("按顺序自动为每个已填提示词的生成区逐集生成，完成后自动保存到当前剧集文件夹（生成剧集\\<剧集名>\\）")
+        self.gen_all_btn.clicked.connect(self._gen_toggle_batch)
         self.gen_split_local_btn = QPushButton("📂 本地分镜")
         self.gen_split_local_btn.setObjectName("accentBtn")
-        self.gen_split_local_btn.setFixedHeight(30)
+        self.gen_split_local_btn.setFixedHeight(28)
         self.gen_split_local_btn.setToolTip("选择一个分镜文件（Shot 01 … 或 视频编号01（总时长：10s）…），"
                                             "按段一键创建生成区：画面风格自动填入全局提示词框，时长自动填入对应生成区")
         self.gen_split_local_btn.clicked.connect(self._gen_split_local)
-        right_v.addWidget(self.gen_split_local_btn)
+        r_row2.addWidget(self.gen_all_btn, 1)
+        r_row2.addWidget(self.gen_split_local_btn, 1)
+        right_v.addLayout(r_row2)
         gl.addLayout(right_v, 2)
         pp.addWidget(gbox)
         # 分镜提示词框：粘贴完成后按回车即触发分段创建生成区
@@ -6057,10 +6051,14 @@ class MainWindow(QMainWindow):
                 pass
         self.gen_area_lay.addWidget(area)
         # 让「+ 添加」卡片始终保持在末尾（新区域插入到 + 卡片之前）
-        add_item = self.gen_area_lay._items[-1]
-        area_item = self.gen_area_lay._items[-2]
-        self.gen_area_lay._items[-2] = add_item
-        self.gen_area_lay._items[-1] = area_item
+        # 若 +卡片在末尾（前面插入了 area），则把 +卡片交换到末尾
+        it = self.gen_area_lay._items
+        if len(it) >= 2 and it[-1] is not self.gen_add_card:
+            for _i in range(len(it) - 1, -1, -1):
+                if it[_i] is self.gen_add_card:
+                    it.pop(_i)
+                    it.append(self.gen_add_card)
+                    break
         self.gen_area_wrap.updateGeometry()  # 强制刷新布局高度，支持多生成区滚动
         self._gen_relayout_areas()            # 按当前宽度让生成区面板横向撑满（贴近右侧视频任务面板）
         self._sync_asset_list_to_area(area)
@@ -6069,6 +6067,8 @@ class MainWindow(QMainWindow):
         # 立即持久化当前剧集（含生成区内容），保证退出/切剧集不丢失
         if not getattr(self, "_gen_suppress_save", False) and getattr(self, "_current_gen_episode", None):
             self._save_gen_areas_to_episode()
+        # 动态更新右上角「分镜数 n」
+        self._gen_update_episode_count_badge()
         return area
 
     def _gen_area_schedule_save(self, *_a):
@@ -6231,10 +6231,27 @@ class MainWindow(QMainWindow):
             self._gen_clear_merge()
             if not getattr(self, "_gen_suppress_save", False) and getattr(self, "_current_gen_episode", None):
                 self._save_gen_areas_to_episode()
+            self._gen_update_episode_count_badge()
 
     def _gen_insert_after(self, after_area):
         """在指定生成区「之后」插入一个新生成区（卡片右上角小+ → 插入剧集）。"""
         self._gen_add_area(after_area=after_area)
+
+    def _gen_update_episode_count_badge(self):
+        """动态更新右上角「剧名.剧集（分镜数 n）」的分镜数（n=当前生成区数量）。"""
+        try:
+            b = getattr(self, "gen_ep_badge_lbl", None)
+            if b is None:
+                return
+            n = len(getattr(self, "_gen_areas", []))
+            if getattr(self, "_current_gen_episode", None):
+                b.setText("· %s（分镜数 %d）" % (self._current_gen_episode, n))
+                b.setVisible(True)
+            else:
+                b.setText("")
+                b.setVisible(False)
+        except Exception:
+            pass
 
     def _gen_clear_merge(self):
         """清除所有生成区的合并选中状态。"""
@@ -7487,6 +7504,8 @@ class MainWindow(QMainWindow):
         # 同步加载生成区数据
         self._log("正在加载剧集「%s」..." % name, "info")
         self._gen_load_areas_sync(name)
+        # 动态显示「· 第N集（分镜数 n）」（n=当前生成区数量）
+        self._gen_update_episode_count_badge()
 
     def _gen_load_areas_sync(self, ep_name):
         """同步加载剧集生成区。
@@ -7707,7 +7726,7 @@ class MainWindow(QMainWindow):
         bb = QHBoxLayout()
         bb.addStretch(1)
         is_storyboard = target_edit is getattr(self, "gen_storyboard_edit", None)
-        okbtn = QPushButton("保持并分段" if is_storyboard else "保存并关闭")
+        okbtn = QPushButton("保存并分段" if is_storyboard else "保存并关闭")
         okbtn.setObjectName("accentBtn")
         okbtn.setFixedHeight(32)
         okbtn.setMinimumWidth(120)   # 预留按钮宽度，避免文字被截断遮挡
