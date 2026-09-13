@@ -6066,6 +6066,9 @@ class MainWindow(QMainWindow):
         pp.addWidget(gbox)
         # 分镜提示词框：粘贴完成后按回车即触发分段创建生成区
         self.gen_storyboard_edit.installEventFilter(self)
+        # 全局/分镜提示词：变化时按当前集延迟落盘（跨集隔离）
+        self.gen_global_edit.textChanged.connect(self._gen_prompt_boxes_on_text)
+        self.gen_storyboard_edit.textChanged.connect(self._gen_prompt_boxes_on_text)
 
         self.gen_area_wrap = QWidget()
         self.gen_area_lay = FlowLayout(self.gen_area_wrap, margin=4, hspacing=6, vspacing=6)
@@ -7946,6 +7949,8 @@ class MainWindow(QMainWindow):
             if getattr(self, "_current_gen_episode", None) and \
                     self._current_gen_episode != name:
                 self._save_gen_areas_to_episode()
+                # 旧集的全局/分镜提示词也按集落盘（保证切走后数据不串）
+                self._save_gen_prompts_to_episode()
         except Exception:
             pass
         # 视频一律保存到当前剧集卡片目录本身（生成剧集\<剧集名>\），不再套"生成视频"子目录
@@ -7953,6 +7958,8 @@ class MainWindow(QMainWindow):
         gen_videos_dir = self._gen_current_videos_dir()
         # 切换显示
         self._gen_episode_stk.setCurrentIndex(1)
+        # 按集重置全局/分镜提示词（跨集不复用：该集无数据则清空）
+        self._gen_load_prompts_sync(name)
         # 顶部栏在剧名后紧跟当前分集纯文字（如「· 第2集」），由上方 proj_title 承担剧名
         try:
             b = getattr(self, "gen_ep_badge_lbl", None)
@@ -8087,6 +8094,8 @@ class MainWindow(QMainWindow):
             pass
         # 保存当前生成区数据到剧集
         self._save_gen_areas_to_episode()
+        # 同时按集落盘全局/分镜提示词，确保返回列表后数据不丢
+        self._save_gen_prompts_to_episode()
         # 刷新卡片以显示最新的生成区数量
         self._render_gen_episode_cards()
         # 回到剧集列表页 → 顶部按钮显示「返回首页」
@@ -8148,6 +8157,75 @@ class MainWindow(QMainWindow):
         """清空所有生成区"""
         for area in self._gen_areas[:]:
             self._gen_remove_area(area)
+
+    # ---- 全局/分镜提示词：按集隔离（跨集不复用） ----
+    def _gen_episode_prompts_file(self, ep_name):
+        ep = next((e for e in self._gen_episodes if e.get("name") == ep_name), None)
+        if not ep:
+            return ""
+        d = os.path.join(self._gen_episode_cards_dir, ep.get("dir", ""))
+        os.makedirs(d, exist_ok=True)
+        return os.path.join(d, "gen_prompts.json")
+
+    def _save_gen_prompts_to_episode(self, ep_name=None):
+        """把当前「全局提示词 + 分镜粘贴框」文本持久化到指定剧集目录（按集隔离）。"""
+        cur = ep_name or getattr(self, "_current_gen_episode", None)
+        if not cur:
+            return
+        p = self._gen_episode_prompts_file(cur)
+        if not p:
+            return
+        try:
+            data = {
+                "global": self.gen_global_edit.toPlainText() if hasattr(self, "gen_global_edit") else "",
+                "storyboard": self.gen_storyboard_edit.toPlainText() if hasattr(self, "gen_storyboard_edit") else "",
+            }
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=1)
+        except Exception:
+            pass
+
+    def _load_gen_prompts_data(self, ep_name):
+        """读取指定剧集目录的「全局/分镜提示词」；无数据返回空（实现跨集不复用）。"""
+        p = self._gen_episode_prompts_file(ep_name)
+        if not p or not os.path.exists(p):
+            return {"global": "", "storyboard": ""}
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return {"global": data.get("global", ""), "storyboard": data.get("storyboard", "")}
+        except Exception:
+            return {"global": "", "storyboard": ""}
+
+    def _gen_load_prompts_sync(self, ep_name):
+        """切集时按集加载/重置全局与分镜提示词：该集无数据则清空，确保跨集隔离。"""
+        data = self._load_gen_prompts_data(ep_name)
+        # 抑制 setPlainText 触发的延迟落盘，避免把新集默认值误写回
+        old = getattr(self, "_gen_suppress_save", False)
+        self._gen_suppress_save = True
+        try:
+            if hasattr(self, "gen_global_edit"):
+                self.gen_global_edit.setPlainText(data.get("global", ""))
+            if hasattr(self, "gen_storyboard_edit"):
+                self.gen_storyboard_edit.setPlainText(data.get("storyboard", ""))
+        finally:
+            self._gen_suppress_save = old
+
+    def _gen_prompt_boxes_on_text(self, *_):
+        """全局/分镜提示词变化 → 延迟按当前集落盘（避免切集时误写别集）。"""
+        if getattr(self, "_gen_suppress_save", False):
+            return
+        if not getattr(self, "_current_gen_episode", None):
+            return
+        if not hasattr(self, "_gen_prompt_save_timer"):
+            self._gen_prompt_save_timer = QTimer(self)
+            self._gen_prompt_save_timer.setSingleShot(True)
+            self._gen_prompt_save_timer.setInterval(500)
+            self._gen_prompt_save_timer.timeout.connect(self._gen_prompt_boxes_flush)
+        self._gen_prompt_save_timer.start()
+
+    def _gen_prompt_boxes_flush(self):
+        self._save_gen_prompts_to_episode()
 
     def _gen_global_prompt_getter(self):
         if hasattr(self, "gen_global_edit"):
