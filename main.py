@@ -4769,7 +4769,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self._img_status_set("保存失败：%s" % str(e), "err")
 
-    def _build_asset_page(self):
+    def _asset_pick_source(self):
         from PySide6.QtWidgets import QFileDialog
         path, _ = QFileDialog.getOpenFileName(
             self, "选择分析结果", self._results_dir,
