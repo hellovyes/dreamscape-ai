@@ -896,7 +896,7 @@ class GenAreaWidget(QWidget):
         lf.setContentsMargins(0, 0, 0, 0)
         lf.setSpacing(4)
 
-        # 提示词（单行）
+        # 提示词（独占整行，二合一按钮移到下方右侧，给提示词腾出空间）
         h1 = QHBoxLayout()
         h1.setSpacing(4)
         self.prompt = QPlainTextEdit()
@@ -904,24 +904,20 @@ class GenAreaWidget(QWidget):
         self.prompt.setMinimumHeight(48)
         self.prompt.setMaximumHeight(48)
         h1.addWidget(self.prompt, 1)
-        bcol = QVBoxLayout()
-        bcol.setSpacing(2)
+        lf.addLayout(h1)
+
+        # 生成/停止二合一按钮（随状态在 h1 下方右侧切换显示）
         self.go = QPushButton("🎬 生成")
         self.go.setObjectName("accentBtn")
-        self.go.setToolTip("开始生成视频")
-        self.go.setMinimumHeight(24)
-        self.go.clicked.connect(self._start)
-        bcol.addWidget(self.go)
-        self.stop_btn = QPushButton("⏹ 停止")
-        self.stop_btn.setObjectName("stopBtn")
-        self.stop_btn.setEnabled(False)
-        self.stop_btn.clicked.connect(self._stop)
-        self.stop_btn.setToolTip("停止生成任务")
-        self.stop_btn.setMinimumHeight(24)
-        bcol.addWidget(self.stop_btn)
-        bcol.addStretch(1)
-        h1.addLayout(bcol)
-        lf.addLayout(h1)
+        self.go.setToolTip("开始生成视频（生成中点击切换为停止）")
+        self.go.setMinimumHeight(32)
+        self.go.setFixedWidth(120)
+        self.go.setCursor(Qt.PointingHandCursor)
+        self.go.clicked.connect(self._on_go_stop_clicked)
+        # 兼容旧引用：保留 stop_btn 属性（不再单独渲染，仅作为状态占位）
+        self.stop_btn = self.go
+        self._running = False
+        self._go_added = False  # 稍后在 tip/status 行右侧添加
 
         # 参数（单行紧凑）
         row2 = QHBoxLayout()
@@ -970,16 +966,29 @@ class GenAreaWidget(QWidget):
         tip.setObjectName("cap")
         tip.setStyleSheet("font-size:10px; color:#94a3b8;")
         tip.setWordWrap(True)
-        lf.addWidget(tip)
 
-        # 创建任务等提示：专门的提示框（位于底部、停止按钮下沿区域），区别于 meta 历史信息
+        # 创建任务等提示：专门的提示框（位于底部、生成/停止二合一按钮左侧），区别于 meta 历史信息
         self.status = QLabel("就绪")
         self.status.setStyleSheet(
             "background:#eff6ff; color:#1d4ed8; font-weight:600; font-size:11px;"
             " border:1px solid #bfdbfe; border-radius:6px; padding:6px 8px;")
         self.status.setWordWrap(True)
         self.status.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        lf.addWidget(self.status)
+
+        # 提示区左侧（缩略图说明 + 状态）与生成/停止二合一按钮并排
+        hint = QWidget()
+        hf = QVBoxLayout(hint)
+        hf.setContentsMargins(0, 0, 0, 0)
+        hf.setSpacing(2)
+        hf.addWidget(tip)
+        hf.addWidget(self.status, 1)
+        hint_row = QHBoxLayout()
+        hint_row.setSpacing(8)
+        hint_row.setContentsMargins(0, 0, 0, 0)
+        hint_row.addWidget(hint, 1)
+        hint_row.addWidget(self.go)
+        lf.addLayout(hint_row)
+        self._go_added = True
 
         # 历史信息行（meta，显示次数/耗时/尺寸等）
         st_row = QHBoxLayout()
@@ -1937,6 +1946,29 @@ class GenAreaWidget(QWidget):
             _rmtree_merge_dir(d)
         self._ref_tmp_dir = None
 
+    def _on_go_stop_clicked(self):
+        """生成/停止二合一按钮：空闲时触发生成，生成中触发停止。"""
+        if self._running:
+            self._stop()
+        else:
+            self._start()
+
+    def _set_running(self, running):
+        """切换二合一按钮的生成/停止显示状态。"""
+        self._running = bool(running)
+        if running:
+            self.go.setText("⏹ 停止")
+            self.go.setObjectName("stopBtn")
+            self.go.setToolTip("停止生成任务")
+        else:
+            self.go.setText("🎬 生成")
+            self.go.setObjectName("accentBtn")
+            self.go.setToolTip("开始生成视频（生成中点击切换为停止）")
+        # 重新应用样式（切换 objectName 后需 reset 才生效）
+        self.go.style().unpolish(self.go)
+        self.go.style().polish(self.go)
+        self.go.update()
+
     def _start(self):
         if self._creating or (self._poll and self._poll.isRunning()):
             return
@@ -1969,8 +2001,7 @@ class GenAreaWidget(QWidget):
         self._poll = None
         self._task = None
         self._creating = True
-        self.go.setEnabled(False)
-        self.stop_btn.setEnabled(True)
+        self._set_running(True)
         self.status.setText("正在整理参考图…")
         self.meta.setText("")
         ref = [p for p in self._ref_imgs if os.path.exists(p)]
@@ -1996,8 +2027,7 @@ class GenAreaWidget(QWidget):
 
     def _on_ref_prep_fail(self, err):
         self._creating = False
-        self.go.setEnabled(True)
-        self.stop_btn.setEnabled(False)
+        self._set_running(False)
         self.status.setText("参考图整理失败")
         self._log("参考图整理失败: %s" % err, "error")
         _tk = self._task if isinstance(self._task, dict) else {}
@@ -2038,8 +2068,7 @@ class GenAreaWidget(QWidget):
             self.status.setText("正在创建任务…")
         except Exception as e:
             self._creating = False
-            self.go.setEnabled(True)
-            self.stop_btn.setEnabled(False)
+            self._set_running(False)
             self.status.setText("启动生成失败")
             self._log("启动生成任务出错: %s" % e, "error")
 
@@ -2095,8 +2124,7 @@ class GenAreaWidget(QWidget):
     def _on_create_failed(self, err):
         self._creating = False
         self._cleanup_ref_tmp()
-        self.go.setEnabled(True)
-        self.stop_btn.setEnabled(False)
+        self._set_running(False)
         self.status.setText("创建任务失败")
         self._log("视频生成创建失败: %s" % err, "error")
         self._last_error = str(err)  # 供外部检测 429
@@ -2135,8 +2163,7 @@ class GenAreaWidget(QWidget):
 
     def _on_done(self, st):
         url = st.get("video_url") or ""
-        self.go.setEnabled(True)
-        self.stop_btn.setEnabled(False)
+        self._set_running(False)
         if not url:
             self._on_fail("任务完成但响应中未找到视频地址")
             return
@@ -2169,8 +2196,7 @@ class GenAreaWidget(QWidget):
                          self._model])
 
     def _on_fail(self, err):
-        self.go.setEnabled(True)
-        self.stop_btn.setEnabled(False)
+        self._set_running(False)
         self.status.setText("生成失败")
         self._gen_done_key = ""  # 失败后清除已生成标记，下一轮批量允许重试
         self._log("视频生成失败: %s" % err, "error")
@@ -2232,6 +2258,5 @@ class GenAreaWidget(QWidget):
             self._poll.stop()
             self._poll.wait(3000)
         self._creating = False
-        self.go.setEnabled(True)
-        self.stop_btn.setEnabled(False)
+        self._set_running(False)
         self.status.setText("已停止")

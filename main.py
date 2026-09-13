@@ -147,6 +147,7 @@ THEME_LIGHT = {
     "input_bg": "#fbfdff",
     "input_border": "#d1d9e6",
     "input_text": "#1f2937",
+    "prompt_text": "#111827",
     "table_alt": "#f8fafc",
     "table_sel": "#dbeafe",
     "table_sel_text": "#1e3a8a",
@@ -202,6 +203,7 @@ THEME_DARK = {
     "input_bg": "#0f172a",
     "input_border": "#26324f",
     "input_text": "#f1f5f9",
+    "prompt_text": "#f8fafc",
     "table_alt": "#101828",
     "table_sel": "#1e3a5f",
     "table_sel_text": "#bfdbfe",
@@ -293,6 +295,9 @@ QLineEdit, QTextEdit, QSpinBox, QComboBox, QDoubleSpinBox {
 QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QComboBox:focus, QDoubleSpinBox:focus {
     border: 1.5px solid %(accent)s; }
 QTextEdit { background: %(surface_alt)s; }
+QPlainTextEdit { background: %(input_bg)s; border: 1px solid %(input_border)s;
+    border-radius: 10px; color: %(prompt_text)s; selection-background-color: %(accent)s; }
+QPlainTextEdit:focus { border: 1.5px solid %(accent)s; }
 QComboBox::drop-down { border: none; width: 26px; }
 
 QLabel { color: %(text_muted)s; }
@@ -4127,14 +4132,6 @@ class MainWindow(QMainWindow):
         _atip = QLabel("🎨 资产管理 · 人物/场景/道具 资产仓库 · 手动上传或从剧本/分镜一键提取，AI 生图复用为参考图")
         _atip.setWordWrap(True)
         h.addWidget(_atip)
-        self.asset_pick_btn = QPushButton("📂 选择分析结果")
-        self.asset_pick_btn.setObjectName("ghostBtn")
-        self.asset_pick_btn.clicked.connect(self._asset_pick_source)
-        h.addWidget(self.asset_pick_btn)
-        self.asset_extract_btn = QPushButton("⚡ 一键提取资产")
-        self.asset_extract_btn.setObjectName("accentBtn")
-        self.asset_extract_btn.clicked.connect(self._asset_extract)
-        h.addWidget(self.asset_extract_btn)
         self.asset_script_btn = QPushButton("📜 从剧本/分镜提取")
         self.asset_script_btn.setObjectName("ghostBtn")
         self.asset_script_btn.clicked.connect(self._asset_extract_from_scripts)
@@ -4149,15 +4146,10 @@ class MainWindow(QMainWindow):
         self.asset_more_btn.setObjectName("ghostBtn")
         self.asset_more_btn.setText("⋯ 更多")
         self.asset_more_btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        self.asset_more_btn.setToolTip("刷新 / 绑定本地图片 / AI 服务")
+        self.asset_more_btn.setToolTip("刷新资产列表")
         self.asset_more_menu = QMenu(self.asset_more_btn)
         _mr1 = self.asset_more_menu.addAction("🔄 刷新资产列表")
         _mr1.triggered.connect(self._asset_refresh_tree)
-        _mr2 = self.asset_more_menu.addAction("📂 绑定本地图片")
-        _mr2.triggered.connect(lambda: self._asset_scan_local_images(silent=False))
-        _mr2.setToolTip("把「资产仓库/images」中已下载的图片绑定到资产：先按文件名自动匹配，剩余图片弹窗手动对应")
-        _mr3 = self.asset_more_menu.addAction("⚙ AI 服务")
-        _mr3.triggered.connect(lambda: self._ai_services_settings(2))
         self.asset_more_btn.setMenu(self.asset_more_menu)
         self.asset_more_btn.setPopupMode(QToolButton.InstantPopup)
         h.addWidget(self.asset_more_btn)
@@ -4210,7 +4202,7 @@ class MainWindow(QMainWindow):
         self.asset_paste_edit.setPlaceholderText("📋 在此粘贴剧本/分析文本，一键提取人物/场景/道具资产（与「选择分析结果→一键提取」同一套 AI 提示词）")
         self.asset_paste_edit.setMinimumHeight(120)
         self.asset_paste_edit.setStyleSheet("background:%s; border:1px solid %s; border-radius:8px; padding:6px; font-size:12px; color:%s;"
-                                              % (_ctok("input_bg"), _ctok("input_border"), _ctok("text")))
+                                              % (_ctok("input_bg"), _ctok("input_border"), _ctok("prompt_text")))
         self.asset_paste_edit.setAcceptRichText(False)
         paste_h.addWidget(self.asset_paste_edit, 2)
         # 右侧信息框：提取动态（准备中/各阶段/完成/失败原因）+ 资产卡片描述（占粘贴框匀出的 1/3 宽度）
@@ -4222,8 +4214,14 @@ class MainWindow(QMainWindow):
         paste_h.addWidget(self.asset_info_edit, 1)
         right = QVBoxLayout()
         right.setSpacing(8)
+        self.asset_pick_btn = QPushButton("📂 选择分析结果")
+        self.asset_pick_btn.setObjectName("ghostBtn")
+        self.asset_pick_btn.setCursor(Qt.PointingHandCursor)
+        self.asset_pick_btn.clicked.connect(self._asset_pick_source)
+        right.addWidget(self.asset_pick_btn)
         self.asset_paste_extract_btn = QPushButton("⚡ 一键提取资产")
         self.asset_paste_extract_btn.setObjectName("accentBtn")
+        self.asset_paste_extract_btn.setCursor(Qt.PointingHandCursor)
         self.asset_paste_extract_btn.clicked.connect(self._asset_extract_from_paste)
         right.addWidget(self.asset_paste_extract_btn)
         self.asset_paste_clear_btn = QPushButton("🗑 清空")
@@ -4306,7 +4304,6 @@ class MainWindow(QMainWindow):
         model = config.GLM_AI.get("model") or "glm-5.3-flash"
         # base_url 按模型自动切换对应服务商（智谱 GLM / Agnes 中国站 / Agnes 国际站）
         base = config.GLM_AI.get("base_url") or config.base_url_for(model)
-        self.asset_extract_btn.setEnabled(False)
         self.asset_script_btn.setEnabled(False)
         self.asset_paste_extract_btn.setEnabled(False)
         self._asset_status("AI 提取准备中…")
@@ -4318,7 +4315,6 @@ class MainWindow(QMainWindow):
         w.start()
 
     def _asset_ai_done(self, data):
-        self.asset_extract_btn.setEnabled(True)
         self.asset_script_btn.setEnabled(True)
         self.asset_paste_extract_btn.setEnabled(True)
         try:
@@ -4379,7 +4375,6 @@ class MainWindow(QMainWindow):
             self._log("AI 资产提取出错: %s" % e, "error")
 
     def _asset_ai_failed(self, err):
-        self.asset_extract_btn.setEnabled(True)
         self.asset_script_btn.setEnabled(True)
         self.asset_paste_extract_btn.setEnabled(True)
         self._asset_info("AI 提取失败：%s" % err, "error")
@@ -5497,25 +5492,6 @@ class MainWindow(QMainWindow):
         self.gen_key_lbl = QLabel("未配置 Key")
         self.gen_key_lbl.setStyleSheet("color:%s;" % _ctok("text_muted"))
         hd.addWidget(self.gen_key_lbl)
-        self.gen_all_btn = QPushButton("⚡ 一键全部生成")
-        self.gen_all_btn.setObjectName("accentBtn")
-        self.gen_all_btn.setMinimumHeight(34)
-        self.gen_all_btn.setToolTip("按顺序自动为每个已填提示词的生成区逐集生成，完成后自动保存到当前剧集文件夹（生成剧集\\<剧集名>\\）")
-        self.gen_all_btn.clicked.connect(self._gen_toggle_batch)
-        hd.addWidget(self.gen_all_btn)
-        self.gen_split_btn = QPushButton("🎬 一键分镜")
-        self.gen_split_btn.setObjectName("accentBtn")
-        self.gen_split_btn.setMinimumHeight(34)
-        self.gen_split_btn.setToolTip("按「视频嗅探」页分段分析的每个分镜，一键创建独立生成区（自动填入该段提示词与时长）")
-        self.gen_split_btn.clicked.connect(self._gen_split_storyboard)
-        hd.addWidget(self.gen_split_btn)
-        self.gen_split_local_btn = QPushButton("📂 本地分镜")
-        self.gen_split_local_btn.setObjectName("accentBtn")
-        self.gen_split_local_btn.setMinimumHeight(34)
-        self.gen_split_local_btn.setToolTip("选择一个分镜文件（Shot 01 … 或 视频编号01（总时长：10s）…），"
-                                            "按段一键创建生成区：画面风格自动填入全局提示词框，时长自动填入对应生成区")
-        self.gen_split_local_btn.clicked.connect(self._gen_split_local)
-        hd.addWidget(self.gen_split_local_btn)
         self.gen_add_ep = QPushButton("➕ 添加剧集")
         self.gen_add_ep.setObjectName("accentBtn")
         self.gen_add_ep.setMinimumHeight(34)
@@ -5524,25 +5500,32 @@ class MainWindow(QMainWindow):
         hd.addWidget(self.gen_add_ep)
         pp.addWidget(head)
 
-        # 全局提示词（画面风格、统一约束）：生成时自动前置到每个生成区
+        # 全局设置区：全局提示词 + 分镜提示词 + 画幅 + 一键动作（全部并入此区，统一布局）
         gbox = QGroupBox("🌐 全局设置")
         gbox.setObjectName("card")
-        gh = QHBoxLayout(gbox)
-        gh.setContentsMargins(8, 6, 8, 8)
-        gh.setSpacing(12)
-        # 左：全局提示词
+        gl = QHBoxLayout(gbox)
+        gl.setContentsMargins(8, 6, 8, 8)
+        gl.setSpacing(10)
+        # 左列：全局提示词（画面风格、统一约束，生成时自动前置到每个生成区）
         left_v = QVBoxLayout()
         left_v.setSpacing(4)
         left_v.addWidget(QLabel("🌐 全局提示词："))
         self.gen_global_edit = QPlainTextEdit()
         self.gen_global_edit.setPlaceholderText("现代都市真人短剧，写实摄影，自然窗光，保持角色资产与空间轴线连续……")
-        self.gen_global_edit.setFixedHeight(60)
-        left_v.addWidget(self.gen_global_edit)
-        gh.addLayout(left_v)
-        # 中：全局画幅
+        left_v.addWidget(self.gen_global_edit, 1)
+        gl.addLayout(left_v, 3)
+        # 中列：分镜提示词（粘贴本地分镜文本，按分镜切段生成）
         mid_v = QVBoxLayout()
         mid_v.setSpacing(4)
-        mid_v.addWidget(QLabel("画幅："))
+        mid_v.addWidget(QLabel("📋 分镜提示词："))
+        self.gen_storyboard_edit = QPlainTextEdit()
+        self.gen_storyboard_edit.setPlaceholderText("在此粘贴本地分镜文本，点击「▶ 按分镜生成」自动切段创建生成区…")
+        mid_v.addWidget(self.gen_storyboard_edit, 1)
+        gl.addLayout(mid_v, 3)
+        # 右列：画幅 + 一键动作（全局动作集中于此，避免顶部工具条冗余）
+        right_v = QVBoxLayout()
+        right_v.setSpacing(4)
+        right_v.addWidget(QLabel("画幅："))
         self._gen_global_aspect = "16:9"
         self.gen_global_aspect = NoWheelComboBox()
         self.gen_global_aspect.addItems(ASPECT_RATIOS)
@@ -5554,24 +5537,32 @@ class MainWindow(QMainWindow):
             self.gen_global_aspect.setCurrentText(cur)
         self._gen_global_aspect = self.gen_global_aspect.currentText()
         self.gen_global_aspect.currentIndexChanged.connect(self._gen_global_aspect_changed)
-        mid_v.addWidget(self.gen_global_aspect)
-        mid_v.addStretch(1)
-        gh.addLayout(mid_v)
-        # 右：分镜提示词 + 分段按钮
-        right_v = QVBoxLayout()
-        right_v.setSpacing(4)
-        right_v.addWidget(QLabel("📋 分镜提示词："))
-        self.gen_storyboard_edit = QPlainTextEdit()
-        self.gen_storyboard_edit.setPlaceholderText("在此粘贴本地分镜文本，点击「▶ 按分镜生成」自动切段创建生成区…")
-        self.gen_storyboard_edit.setFixedHeight(60)
-        right_v.addWidget(self.gen_storyboard_edit)
+        right_v.addWidget(self.gen_global_aspect)
+        self.gen_all_btn = QPushButton("⚡ 一键全部生成")
+        self.gen_all_btn.setObjectName("accentBtn")
+        self.gen_all_btn.setMinimumHeight(34)
+        self.gen_all_btn.setToolTip("按顺序自动为每个已填提示词的生成区逐集生成，完成后自动保存到当前剧集文件夹（生成剧集\\<剧集名>\\）")
+        self.gen_all_btn.clicked.connect(self._gen_toggle_batch)
+        right_v.addWidget(self.gen_all_btn)
+        self.gen_split_btn = QPushButton("🎬 一键分镜")
+        self.gen_split_btn.setObjectName("accentBtn")
+        self.gen_split_btn.setMinimumHeight(32)
+        self.gen_split_btn.setToolTip("按「视频嗅探」页分段分析的每个分镜，一键创建独立生成区（自动填入该段提示词与时长）")
+        self.gen_split_btn.clicked.connect(self._gen_split_storyboard)
+        right_v.addWidget(self.gen_split_btn)
+        self.gen_split_local_btn = QPushButton("📂 本地分镜")
+        self.gen_split_local_btn.setObjectName("accentBtn")
+        self.gen_split_local_btn.setMinimumHeight(32)
+        self.gen_split_local_btn.setToolTip("选择一个分镜文件（Shot 01 … 或 视频编号01（总时长：10s）…），"
+                                            "按段一键创建生成区：画面风格自动填入全局提示词框，时长自动填入对应生成区")
+        self.gen_split_local_btn.clicked.connect(self._gen_split_local)
+        right_v.addWidget(self.gen_split_local_btn)
         self.gen_storyboard_btn = QPushButton("▶ 按分镜生成")
         self.gen_storyboard_btn.setObjectName("accentBtn")
         self.gen_storyboard_btn.setMinimumHeight(32)
         self.gen_storyboard_btn.clicked.connect(self._gen_storyboard_from_paste)
         right_v.addWidget(self.gen_storyboard_btn)
-        right_v.addStretch(1)
-        gh.addLayout(right_v)
+        gl.addLayout(right_v, 2)
         pp.addWidget(gbox)
 
         self.gen_area_wrap = QWidget()
