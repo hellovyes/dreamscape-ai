@@ -5620,7 +5620,7 @@ class MainWindow(QMainWindow):
         # ---- 视频播放区：内嵌播放器已隐藏，点击任务/文件卡片以弹窗播放 ----
         t_play = QLabel("▶ 视频以弹窗播放（点击任务或文件卡片）")
         self._gen_play_lbl = t_play
-        t_play.setStyleSheet("color:%s; font-weight:800; font-size:11px;" % theme["text_muted"])
+        t_play.setStyleSheet("color:%s; font-weight:800; font-size:11px;" % _ctok("text_muted"))
         lay.addWidget(t_play)
 
         # 播放器初始化
