@@ -2189,6 +2189,7 @@ class GenAreaWidget(QWidget):
             return
         self._latest_url = url
         self._gen_done_key = self._gen_done_marker()  # 记录成功生成的参数快照，供批量跳过判断
+        self.state_changed.emit()  # 落盘 done_key，崩溃/重启后一键生成仍可跳过已生成区
         self.status.setText("✅ 生成完成")
         self.meta.setText(url[:80])
         self._update_history_status("completed", "", "", url)
@@ -2219,6 +2220,7 @@ class GenAreaWidget(QWidget):
         self._set_running(False)
         self.status.setText("生成失败")
         self._gen_done_key = ""  # 失败后清除已生成标记，下一轮批量允许重试
+        self.state_changed.emit()  # 落盘已清除的标记，持久化与内存保持一致
         self._log("视频生成失败: %s" % err, "error")
         self._update_history_status("failed", str(err))
         self._on_task("failed", {"task_id": self._task.get("task_id") or "" if self._task else "",
